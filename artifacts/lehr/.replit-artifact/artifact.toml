@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "LEHR — Manage Staff"
+version = "1.0.0"
+id = "artifacts/lehr"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23921
+
+[services.development]
+run = "pnpm --filter @workspace/lehr run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lehr", "run", "build" ]
+publicDir = "artifacts/lehr/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23921"
+BASE_PATH = "/"
