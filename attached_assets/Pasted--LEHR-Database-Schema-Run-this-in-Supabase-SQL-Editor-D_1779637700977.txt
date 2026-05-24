@@ -1,0 +1,93 @@
+-- LEHR Database Schema
+-- Run this in Supabase SQL Editor: Dashboard → SQL Editor → New Query
+
+-- Companies table
+CREATE TABLE IF NOT EXISTS companies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  admin_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  subscription_status TEXT NOT NULL DEFAULT 'trial' CHECK (subscription_status IN ('trial', 'active', 'cancelled', 'past_due')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Employees table
+CREATE TABLE IF NOT EXISTS employees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  email TEXT UNIQUE,
+  pin_code TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin', 'manager', 'staff')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Shifts table
+CREATE TABLE IF NOT EXISTS shifts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'missed', 'cancelled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Time logs table (clock-in / clock-out)
+CREATE TABLE IF NOT EXISTS time_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('clock_in', 'clock_out', 'break_in', 'break_out')),
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+  notes TEXT
+);
+
+-- Leave requests table
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('sick', 'holiday', 'unpaid', 'other')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied')),
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Row Level Security: Enable RLS on all tables
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shifts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
+
+-- Basic RLS policy: authenticated users can read/write their company's data
+-- (Expand these as you add multi-tenant logic)
+CREATE POLICY "Authenticated users can manage companies" ON companies
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can manage employees" ON employees
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can manage shifts" ON shifts
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can manage time_logs" ON time_logs
+  FOR ALL USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can manage leave_requests" ON leave_requests
+  FOR ALL USING (auth.role() = 'authenticated');
+-- Step 1: Add owner_id column (safe to run even if it already exists)
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
+
+-- Step 2: Enable RLS (safe to run even if already enabled)
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+
+-- Step 3: Drop the old policy, then create the correct one
+DROP POLICY IF EXISTS "Authenticated users can manage companies" ON companies;
+DROP POLICY IF EXISTS "Users manage their own companies" ON companies;
+
+CREATE POLICY "Users manage their own companies"
+ON companies FOR ALL
+USING (owner_id = auth.uid())
+WITH CHECK (owner_id = auth.uid());
