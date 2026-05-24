@@ -1,4 +1,5 @@
 {
+  "name": "lehr",
   "buildCommand": "pnpm --filter @workspace/lehr run build:vercel",
   "outputDirectory": "artifacts/lehr/dist",
   "installCommand": "pnpm install",
