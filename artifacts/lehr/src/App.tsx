@@ -10,6 +10,7 @@ import StaffPage from "@/pages/StaffPage";
 import RotaPage from "@/pages/RotaPage";
 import TimePage from "@/pages/TimePage";
 import LeavePage from "@/pages/LeavePage";
+import KioskPage from "@/pages/KioskPage";
 
 const queryClient = new QueryClient();
 
@@ -18,6 +19,7 @@ function Router() {
     <Switch>
       <Route path="/" component={LandingPage} />
       <Route path="/auth" component={AuthPage} />
+      <Route path="/clock" component={KioskPage} />
       <Route path="/dashboard" component={DashboardPage} />
       <Route path="/dashboard/staff" component={StaffPage} />
       <Route path="/dashboard/rota" component={RotaPage} />
