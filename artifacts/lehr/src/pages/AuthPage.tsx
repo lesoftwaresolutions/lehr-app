@@ -39,9 +39,10 @@ export default function AuthPage() {
         toast({ title: "Account created!", description: "Please check your email to verify your account." });
       }
     } catch (error: any) {
+      const message = error?.message || error?.error_description || String(error) || "An unexpected error occurred.";
       toast({ 
         title: "Authentication failed", 
-        description: error.message || "An unexpected error occurred.",
+        description: message,
         variant: "destructive"
       });
     } finally {
