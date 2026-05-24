@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
@@ -12,9 +12,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Calendar, Clock, Users, FileText, LogOut, LayoutDashboard, Menu, ChevronDown, Building2, Plus, Check } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { useEffect } from "react";
 
-export function DashboardLayout({ children, title }: { children: React.ReactNode; title: string }) {
+export function DashboardLayout({ children, title }: { children: ReactNode; title: string }) {
   const [location, setLocation] = useLocation();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const { companies, activeCompany, setActiveCompany, refreshCompanies } = useCompany();
