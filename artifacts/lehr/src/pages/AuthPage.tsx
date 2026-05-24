@@ -79,6 +79,7 @@ export default function AuthPage() {
         </div>
       )}
 
+
       <Card className="w-full max-w-md shadow-xl border-slate-200">
         <Tabs defaultValue="login" className="w-full">
           <TabsList className="grid w-full grid-cols-2 rounded-none rounded-t-lg border-b bg-slate-50 p-0 h-14">
