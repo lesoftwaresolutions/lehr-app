@@ -46,7 +46,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
     <div className="flex flex-col h-full bg-slate-900 text-slate-300">
       {/* Logo */}
       <div className="p-5 flex items-center gap-3 bg-slate-950 border-b border-slate-800">
-        <img src="/lehr-logo.png" alt="LEHR Logo" className="h-8 brightness-200 grayscale" />
+        <img src="/logo.jpeg" alt="LEHR Logo" className="h-8 object-contain rounded" />
         <span className="font-bold text-xl text-white tracking-tight">LEHR</span>
       </div>
 
