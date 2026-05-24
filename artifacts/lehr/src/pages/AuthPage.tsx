@@ -15,13 +15,22 @@ export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [connStatus, setConnStatus] = useState<"checking" | "ok" | "error">("checking");
+  const [connError, setConnError] = useState("");
 
   // Check if already logged in
   React.useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setLocation("/dashboard");
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        setConnStatus("error");
+        setConnError(error.message || String(error));
+      } else {
+        setConnStatus("ok");
+        if (session) setLocation("/dashboard");
       }
+    }).catch((err: any) => {
+      setConnStatus("error");
+      setConnError(err?.message || "Cannot reach Supabase — check project URL and key.");
     });
   }, [setLocation]);
 
@@ -56,6 +65,19 @@ export default function AuthPage() {
         <img src="/lehr-logo.png" alt="LEHR Logo" className="h-10" />
         <span className="font-bold text-2xl text-primary">LEHR</span>
       </div>
+
+      {connStatus === "error" && (
+        <div className="w-full max-w-md mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800" data-testid="conn-error-banner">
+          <p className="font-semibold mb-1">Cannot connect to Supabase</p>
+          <p className="font-mono text-xs break-all">{connError || "Failed to fetch — project may be paused or URL is wrong."}</p>
+          <p className="mt-2 text-xs text-red-600">Check: Settings → API in your Supabase dashboard and confirm the project is not paused.</p>
+        </div>
+      )}
+      {connStatus === "checking" && (
+        <div className="w-full max-w-md mb-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 flex items-center gap-2" data-testid="conn-checking-banner">
+          <Loader2 className="h-4 w-4 animate-spin" /> Connecting to Supabase...
+        </div>
+      )}
 
       <Card className="w-full max-w-md shadow-xl border-slate-200">
         <Tabs defaultValue="login" className="w-full">
