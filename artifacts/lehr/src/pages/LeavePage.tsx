@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/CompanyContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -50,6 +51,7 @@ function fmtDate(d: string) {
 
 export default function LeavePage() {
   const { toast } = useToast();
+  const { activeCompany } = useCompany();
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,18 +65,20 @@ export default function LeavePage() {
   });
 
   const fetchAll = useCallback(async () => {
+    if (!activeCompany) return;
     setIsLoading(true);
     const [reqRes, empRes] = await Promise.all([
       supabase
         .from("leave_requests")
         .select("*, employees(full_name)")
+        .eq("employees.company_id", activeCompany.id)
         .order("created_at", { ascending: false }),
-      supabase.from("employees").select("id, full_name").eq("status", "active").order("full_name"),
+      supabase.from("employees").select("id, full_name").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),
     ]);
     if (reqRes.data) setRequests(reqRes.data as LeaveRequest[]);
     if (empRes.data) setEmployees(empRes.data);
     setIsLoading(false);
-  }, []);
+  }, [activeCompany]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

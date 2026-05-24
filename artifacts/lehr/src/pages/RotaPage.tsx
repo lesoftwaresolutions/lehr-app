@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/CompanyContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -36,6 +37,7 @@ function fmtTime(t: string) {
 
 export default function RotaPage() {
   const { toast } = useToast();
+  const { activeCompany } = useCompany();
   const [weekOffset, setWeekOffset] = useState(0);
   const [employees, setEmployees] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
@@ -51,15 +53,16 @@ export default function RotaPage() {
   const weekLabel = `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
 
   const fetchData = useCallback(async () => {
+    if (!activeCompany) return;
     setIsLoading(true);
     const [empRes, shiftRes] = await Promise.all([
-      supabase.from("employees").select("*").eq("status", "active").order("full_name"),
+      supabase.from("employees").select("*").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),
       supabase.from("shifts").select("*, employees(full_name)").gte("date", fmtDate(weekStart)).lte("date", fmtDate(weekEnd)),
     ]);
     if (empRes.data) setEmployees(empRes.data);
     if (shiftRes.data) setShifts(shiftRes.data);
     setIsLoading(false);
-  }, [weekOffset]);
+  }, [weekOffset, activeCompany]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

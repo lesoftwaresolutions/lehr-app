@@ -1,32 +1,44 @@
 import React from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/CompanyContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Calendar, Clock, Users, Building } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 
 export default function DashboardPage() {
+  const { activeCompany } = useCompany();
   const [stats, setStats] = React.useState({ staff: 0, shifts: 0, clockedIn: 0, leave: 0 });
 
   React.useEffect(() => {
+    if (!activeCompany) return;
+    const companyId = activeCompany.id;
     async function fetchStats() {
-      // Stub stats for now since Supabase integration depends on real DB schema
-      const { count: staff } = await supabase.from('employees').select('*', { count: 'exact', head: true }).eq('status', 'active');
-      
       const today = new Date().toISOString().split('T')[0];
-      const { count: shifts } = await supabase.from('shifts').select('*', { count: 'exact', head: true }).eq('date', today);
 
-      const { count: leave } = await supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+      const [staffRes, shiftsRes, leaveRes, clockRes] = await Promise.all([
+        supabase.from('employees').select('*', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'active'),
+        supabase.from('shifts').select('*', { count: 'exact', head: true }).eq('date', today),
+        supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('time_logs').select('employee_id, action').gte('timestamp', `${today}T00:00:00`).order('timestamp', { ascending: false }),
+      ]);
+
+      // Determine who is currently clocked in by finding last action per employee
+      const logData = clockRes.data ?? [];
+      const lastAction: Record<string, string> = {};
+      for (const log of logData) {
+        if (!lastAction[log.employee_id]) lastAction[log.employee_id] = log.action;
+      }
+      const clockedIn = Object.values(lastAction).filter(a => a === 'clock_in').length;
 
       setStats({
-        staff: staff || 0,
-        shifts: shifts || 0,
-        clockedIn: 0, // Would need complex query
-        leave: leave || 0
+        staff: staffRes.count || 0,
+        shifts: shiftsRes.count || 0,
+        clockedIn,
+        leave: leaveRes.count || 0,
       });
     }
     fetchStats();
-  }, []);
+  }, [activeCompany]);
 
   return (
     <DashboardLayout title="Dashboard">

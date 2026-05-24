@@ -1,19 +1,19 @@
 import React from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/CompanyContext";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
-const COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
 export default function StaffPage() {
+  const { activeCompany } = useCompany();
   const [staff, setStaff] = React.useState<any[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
@@ -25,11 +25,12 @@ export default function StaffPage() {
   });
 
   const fetchStaff = React.useCallback(async () => {
+    if (!activeCompany) return;
     setIsLoading(true);
-    const { data, error } = await supabase.from('employees').select('*').order('full_name');
+    const { data, error } = await supabase.from('employees').select('*').eq('company_id', activeCompany.id).order('full_name');
     if (!error && data) setStaff(data);
     setIsLoading(false);
-  }, []);
+  }, [activeCompany]);
 
   React.useEffect(() => { fetchStaff(); }, [fetchStaff]);
 
@@ -52,7 +53,7 @@ export default function StaffPage() {
     
     const payload = {
       ...formData,
-      company_id: COMPANY_ID
+      company_id: activeCompany?.id,
     };
 
     let error;
