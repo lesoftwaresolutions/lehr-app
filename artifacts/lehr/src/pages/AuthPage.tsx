@@ -36,6 +36,29 @@ export default function AuthPage() {
     });
   }, [setLocation]);
 
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast({ title: "Enter your email first", description: "Type your email address above, then click Forgot password.", variant: "destructive" });
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      toast({ title: "Reset email sent", description: `Check ${email} for a password reset link.` });
+    } catch (error: any) {
+      toast({
+        title: "Could not send reset email",
+        description: error?.message || "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSignIn = async () => {
     try {
       setIsLoading(true);
@@ -113,7 +136,7 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4">
       <div className="mb-8 flex items-center justify-center gap-3">
-        <img src="/lehr-logo.png" alt="LEHR Logo" className="h-10" />
+        <img src="/logo.jpeg" alt="LEHR Logo" className="h-10 object-contain rounded" />
         <span className="font-bold text-2xl text-primary">LEHR</span>
       </div>
 
@@ -180,8 +203,18 @@ export default function AuthPage() {
                   data-testid="input-login-password"
                 />
               </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={isLoading}
+                  className="text-xs text-slate-500 hover:text-primary transition-colors"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <Button
-                className="w-full mt-4"
+                className="w-full mt-2"
                 onClick={handleSignIn}
                 disabled={isLoading || !email || !password}
                 data-testid="button-submit-login"

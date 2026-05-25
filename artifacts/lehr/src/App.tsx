@@ -13,6 +13,7 @@ import TimePage from "@/pages/TimePage";
 import LeavePage from "@/pages/LeavePage";
 import KioskPage from "@/pages/KioskPage";
 import CompanyPickerPage from "@/pages/CompanyPickerPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 
 const queryClient = new QueryClient();
 
@@ -21,6 +22,7 @@ function Router() {
     <Switch>
       <Route path="/" component={LandingPage} />
       <Route path="/auth" component={AuthPage} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
       <Route path="/clock" component={KioskPage} />
       <Route path="/pick-company" component={CompanyPickerPage} />
       <Route path="/dashboard" component={DashboardPage} />
