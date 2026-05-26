@@ -14,6 +14,8 @@ import LeavePage from "@/pages/LeavePage";
 import KioskPage from "@/pages/KioskPage";
 import CompanyPickerPage from "@/pages/CompanyPickerPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
+import EmployeeLoginPage from "@/pages/EmployeeLoginPage";
+import EmployeePortalPage from "@/pages/EmployeePortalPage";
 
 const queryClient = new QueryClient();
 
@@ -23,6 +25,8 @@ function Router() {
       <Route path="/" component={LandingPage} />
       <Route path="/auth" component={AuthPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
+      <Route path="/employee-login" component={EmployeeLoginPage} />
+      <Route path="/employee-portal" component={EmployeePortalPage} />
       <Route path="/clock" component={KioskPage} />
       <Route path="/pick-company" component={CompanyPickerPage} />
       <Route path="/dashboard" component={DashboardPage} />

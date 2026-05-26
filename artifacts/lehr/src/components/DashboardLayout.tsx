@@ -13,10 +13,13 @@ import {
 import { Calendar, Clock, Users, FileText, LogOut, LayoutDashboard, Menu, ChevronDown, Building2, Plus, Check } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
+type SidebarStats = { totalStaff: number; clockedIn: number; hoursToday: number };
+
 export function DashboardLayout({ children, title }: { children: ReactNode; title: string }) {
   const [location, setLocation] = useLocation();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const { companies, activeCompany, setActiveCompany, refreshCompanies } = useCompany();
+  const [stats, setStats] = useState<SidebarStats>({ totalStaff: 0, clockedIn: 0, hoursToday: 0 });
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -28,6 +31,56 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       }
     });
   }, [setLocation, refreshCompanies]);
+
+  useEffect(() => {
+    if (!activeCompany) return;
+    const today = new Date().toISOString().split("T")[0];
+
+    Promise.all([
+      supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", activeCompany.id).eq("status", "active"),
+      supabase.from("time_logs")
+        .select("employee_id, action, timestamp")
+        .gte("timestamp", `${today}T00:00:00`)
+        .lte("timestamp", `${today}T23:59:59`)
+        .order("timestamp", { ascending: true }),
+    ]).then(([empRes, logRes]) => {
+      const totalStaff = empRes.count ?? 0;
+      const logs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
+
+      // Group by employee, pair clock_in → clock_out to compute hours
+      const byEmp: Record<string, { action: string; timestamp: string }[]> = {};
+      logs.forEach(l => {
+        if (!byEmp[l.employee_id]) byEmp[l.employee_id] = [];
+        byEmp[l.employee_id].push({ action: l.action, timestamp: l.timestamp });
+      });
+
+      let totalMs = 0;
+      const clockedInSet = new Set<string>();
+
+      Object.entries(byEmp).forEach(([empId, events]) => {
+        let lastIn: string | null = null;
+        let isIn = false;
+        events.forEach(e => {
+          if (e.action === "clock_in") { lastIn = e.timestamp; isIn = true; }
+          if (e.action === "clock_out" && lastIn) {
+            totalMs += new Date(e.timestamp).getTime() - new Date(lastIn).getTime();
+            lastIn = null; isIn = false;
+          }
+        });
+        if (isIn) {
+          clockedInSet.add(empId);
+          // Count hours for in-progress session
+          if (lastIn) totalMs += Date.now() - new Date(lastIn).getTime();
+        }
+      });
+
+      setStats({
+        totalStaff,
+        clockedIn: clockedInSet.size,
+        hoursToday: Math.round(totalMs / 3600000 * 10) / 10,
+      });
+    });
+  }, [activeCompany]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -123,6 +176,25 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
             );
           })}
         </nav>
+      </div>
+
+      {/* Today's Stats */}
+      <div className="px-3 py-3 border-t border-slate-800">
+        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider px-1 mb-2">Today</p>
+        <div className="grid grid-cols-3 gap-1.5">
+          <div className="flex flex-col items-center bg-slate-800 rounded-lg py-2 px-1">
+            <span className="text-lg font-bold text-white leading-none">{stats.totalStaff}</span>
+            <span className="text-[9px] text-slate-400 mt-1 text-center leading-tight">Total Staff</span>
+          </div>
+          <div className="flex flex-col items-center bg-slate-800 rounded-lg py-2 px-1">
+            <span className="text-lg font-bold text-emerald-400 leading-none">{stats.clockedIn}</span>
+            <span className="text-[9px] text-slate-400 mt-1 text-center leading-tight">Active Now</span>
+          </div>
+          <div className="flex flex-col items-center bg-slate-800 rounded-lg py-2 px-1">
+            <span className="text-lg font-bold text-primary leading-none">{stats.hoursToday}</span>
+            <span className="text-[9px] text-slate-400 mt-1 text-center leading-tight">Hrs Today</span>
+          </div>
+        </div>
       </div>
 
       {/* User footer */}
