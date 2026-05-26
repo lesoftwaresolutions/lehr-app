@@ -29,18 +29,19 @@ export default function EmployeePortalPage() {
     if (!stored) { setLocation("/employee-login"); return; }
     const emp = JSON.parse(stored);
     setEmployee(emp);
-    fetchData(emp.id);
+    fetchData(emp.id, emp.company_id);
   }, []);
 
-  const fetchData = async (empId: string) => {
+  const fetchData = async (empId: string, companyId: string) => {
     setIsLoading(true);
     const today = new Date().toISOString().split("T")[0];
     const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
 
     const [shiftRes, logRes, leaveRes] = await Promise.all([
-      supabase.from("shifts").select("*").eq("employee_id", empId).gte("date", today).lte("date", nextMonth).order("date"),
+      // company_id guard ensures no cross-company data leak even if employee_id collides
+      supabase.from("shifts").select("*").eq("employee_id", empId).eq("company_id", companyId).gte("date", today).lte("date", nextMonth).order("date"),
       supabase.from("time_logs").select("*").eq("employee_id", empId).order("timestamp", { ascending: false }).limit(10),
-      supabase.from("leave_requests").select("*").eq("employee_id", empId).order("created_at", { ascending: false }).limit(5),
+      supabase.from("leave_requests").select("*").eq("employee_id", empId).eq("company_id", companyId).order("created_at", { ascending: false }).limit(5),
     ]);
     if (shiftRes.data) setShifts(shiftRes.data);
     if (logRes.data) setLogs(logRes.data);
