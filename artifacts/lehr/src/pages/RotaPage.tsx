@@ -9,7 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight, Share2, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Share2, Plus, Trash2, FileSpreadsheet, FileText } from "lucide-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 function getWeekDates(offset: number) {
   const now = new Date();
@@ -105,6 +108,44 @@ export default function RotaPage() {
     fetchData();
   };
 
+  const buildRotaRows = () =>
+    employees.map(emp => {
+      const row: Record<string, string> = { Employee: emp.full_name };
+      weekDates.forEach(d => {
+        const shift = getShift(emp.id, d);
+        row[fmtDay(d)] = shift ? `${fmtTime(shift.start_time)}-${fmtTime(shift.end_time)}` : "";
+      });
+      return row;
+    });
+
+  const handleExcelExport = () => {
+    const rows = buildRotaRows();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const colWidths = [{ wch: 22 }, ...weekDates.map(() => ({ wch: 14 }))];
+    ws["!cols"] = colWidths;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rota");
+    XLSX.writeFile(wb, `LEHR_Rota_${weekLabel.replace(/\s/g, "_").replace(/[–]/g, "-")}.xlsx`);
+  };
+
+  const handlePdfExport = () => {
+    const doc = new jsPDF({ orientation: "landscape" });
+    doc.setFontSize(13);
+    doc.text(`LEHR — Rota: ${weekLabel}`, 14, 15);
+    const head = [["Employee", ...weekDates.map(fmtDay)]];
+    const body = buildRotaRows().map(row => [row["Employee"], ...weekDates.map(d => row[fmtDay(d)] || "")]);
+    autoTable(doc, {
+      head,
+      body,
+      startY: 22,
+      styles: { fontSize: 8, cellPadding: 3 },
+      headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [241, 245, 249] },
+      columnStyles: { 0: { fontStyle: "bold", cellWidth: 36 } },
+    });
+    doc.save(`LEHR_Rota_${weekLabel.replace(/\s/g, "_").replace(/[–]/g, "-")}.pdf`);
+  };
+
   const handleWhatsApp = () => {
     let text = `LEHR Rota: ${weekLabel}\n\n`;
     employees.forEach(emp => {
@@ -133,10 +174,20 @@ export default function RotaPage() {
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setWeekOffset(0)} className="text-slate-500 text-xs" data-testid="button-this-week">This week</Button>
         </div>
-        <Button onClick={handleWhatsApp} variant="outline" className="gap-2 text-green-700 border-green-300 hover:bg-green-50" data-testid="button-whatsapp-export">
-          <Share2 size={16} />
-          WhatsApp Export
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={handleExcelExport} variant="outline" className="gap-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50" data-testid="button-excel-export">
+            <FileSpreadsheet size={16} />
+            Excel
+          </Button>
+          <Button onClick={handlePdfExport} variant="outline" className="gap-2 text-red-700 border-red-300 hover:bg-red-50" data-testid="button-pdf-export">
+            <FileText size={16} />
+            PDF
+          </Button>
+          <Button onClick={handleWhatsApp} variant="outline" className="gap-2 text-green-700 border-green-300 hover:bg-green-50" data-testid="button-whatsapp-export">
+            <Share2 size={16} />
+            WhatsApp
+          </Button>
+        </div>
       </div>
 
       {/* Rota Grid */}
