@@ -66,7 +66,7 @@ export default function DashboardPage() {
         supabase.from("shifts").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("date", today),
         supabase.from("leave_requests").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "pending"),
         supabase.from("time_logs").select("employee_id, action, timestamp").gte("timestamp", `${today}T00:00:00`).order("timestamp", { ascending: true }),
-        supabase.from("companies").select("break_allowance_minutes").eq("id", companyId).maybeSingle(),
+        supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
       ]);
 
       const allowance = (companyRes.data as any)?.break_allowance_minutes ?? 30;

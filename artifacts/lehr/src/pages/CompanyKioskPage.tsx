@@ -117,10 +117,14 @@ export default function CompanyKioskPage() {
   // Fetch company
   useEffect(() => {
     if (!companyId) return;
-    supabase.from("companies").select("id, name, break_allowance_minutes").eq("id", companyId).maybeSingle()
+    supabase.from("companies").select("*").eq("id", companyId).maybeSingle()
       .then(({ data, error }) => {
         if (error || !data) { setCompanyError(true); return; }
-        setCompany(data as Company);
+        setCompany({
+          id: data.id,
+          name: data.name,
+          break_allowance_minutes: data.break_allowance_minutes ?? null,
+        });
       });
   }, [companyId]);
 
