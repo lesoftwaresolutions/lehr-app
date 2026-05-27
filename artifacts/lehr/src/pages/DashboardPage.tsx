@@ -12,6 +12,15 @@ type ActionType = "clock_in" | "clock_out" | "break_in" | "break_out";
 
 interface BreakEntry { id: string; name: string; breakMs: number; workMs: number; }
 
+// Normalise action names — supports both old (clock_in/out/break_in/break_out)
+// and new (login/logout/break-out/break-in) kiosk action values.
+function isLoginAct (a: string) { return a === "login"     || a === "clock_in"; }
+function isLogoutAct(a: string) { return a === "logout"    || a === "clock_out"; }
+function isBreakStart(a: string){ return a === "break-out" || a === "break_in"; }
+function isBreakEnd  (a: string){ return a === "break-in"  || a === "break_out"; }
+function isClockedIn (a: string){ return isLoginAct(a) || isBreakEnd(a); }
+function isOnBreakAct(a: string){ return isBreakStart(a); }
+
 function computeLiveStatus(logs: { employee_id: string; action: string; timestamp: string }[]) {
   const byEmp: Record<string, { events: { action: string; ts: number }[] }> = {};
   logs.forEach(l => {
@@ -25,8 +34,8 @@ function computeLiveStatus(logs: { employee_id: string; action: string; timestam
   Object.entries(byEmp).forEach(([id, { events }]) => {
     let breakMs = 0, lastBreak: number | null = null;
     events.forEach(({ action, ts }) => {
-      if (action === "break_in") lastBreak = ts;
-      if ((action === "break_out" || action === "clock_out") && lastBreak !== null) {
+      if (isBreakStart(action)) lastBreak = ts;
+      if ((isBreakEnd(action) || isLogoutAct(action)) && lastBreak !== null) {
         breakMs += ts - lastBreak; lastBreak = null;
       }
     });
@@ -79,13 +88,13 @@ export default function DashboardPage() {
 
       const { lastActions, breakMsMap } = computeLiveStatus(logs);
 
-      const clockedIn = Object.values(lastActions).filter(a => a === "clock_in" || a === "break_out").length;
-      const onBreakCount = Object.values(lastActions).filter(a => a === "break_in").length;
+      const clockedIn = Object.values(lastActions).filter(isClockedIn).length;
+      const onBreakCount = Object.values(lastActions).filter(isOnBreakAct).length;
 
       // Build on-break staff details
       const empList = staffRes.data ?? [];
       const breakStaff: BreakEntry[] = Object.entries(lastActions)
-        .filter(([, a]) => a === "break_in")
+        .filter(([, a]) => isOnBreakAct(a))
         .map(([id]) => {
           const emp = (empList as any[]).find(e => e.id === id);
           return { id, name: emp?.full_name ?? id, breakMs: breakMsMap[id] ?? 0, workMs: 0 };

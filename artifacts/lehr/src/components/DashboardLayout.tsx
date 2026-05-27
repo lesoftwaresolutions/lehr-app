@@ -53,7 +53,12 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       const totalStaff = empRes.count ?? 0;
       const logs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
 
-      // Group by employee, pair clock_in → clock_out to compute hours
+      // Normalise action names — supports both old (clock_in/out) and new (login/logout/break-out/break-in)
+      const isLoginAct  = (a: string) => a === "login"     || a === "clock_in";
+      const isLogoutAct = (a: string) => a === "logout"    || a === "clock_out";
+      const isBreakEnd  = (a: string) => a === "break-in"  || a === "break_out";
+
+      // Group by employee and compute hours + clocked-in status
       const byEmp: Record<string, { action: string; timestamp: string }[]> = {};
       logs.forEach(l => {
         if (!byEmp[l.employee_id]) byEmp[l.employee_id] = [];
@@ -67,15 +72,14 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
         let lastIn: string | null = null;
         let isIn = false;
         events.forEach(e => {
-          if (e.action === "clock_in") { lastIn = e.timestamp; isIn = true; }
-          if (e.action === "clock_out" && lastIn) {
+          if (isLoginAct(e.action) || isBreakEnd(e.action)) { lastIn = e.timestamp; isIn = true; }
+          if (isLogoutAct(e.action) && lastIn) {
             totalMs += new Date(e.timestamp).getTime() - new Date(lastIn).getTime();
             lastIn = null; isIn = false;
           }
         });
         if (isIn) {
           clockedInSet.add(empId);
-          // Count hours for in-progress session
           if (lastIn) totalMs += Date.now() - new Date(lastIn).getTime();
         }
       });

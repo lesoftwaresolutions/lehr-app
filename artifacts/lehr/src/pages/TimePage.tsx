@@ -18,20 +18,23 @@ type LogEntry = {
 function fmtDateTime(ts: string) {
   return new Date(ts).toLocaleString("en-GB", {
     weekday: "short", day: "numeric", month: "short",
-    hour: "2-digit", minute: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
   });
 }
 
 function actionLabel(a: string) {
-  if (a === "clock_in") return "Clock In";
-  if (a === "clock_out") return "Clock Out";
-  if (a === "break_in") return "Break Start";
-  if (a === "break_out") return "Break End";
+  if (a === "login"     || a === "clock_in")  return "Login";
+  if (a === "logout"    || a === "clock_out") return "Logout";
+  if (a === "break-out" || a === "break_in")  return "Break Out";
+  if (a === "break-in"  || a === "break_out") return "Break In";
   return a;
 }
 
-const actionColor = (a: string): "default" | "secondary" | "outline" | "destructive" =>
-  a === "clock_in" ? "default" : a === "clock_out" ? "secondary" : "outline";
+const actionColor = (a: string): "default" | "secondary" | "outline" | "destructive" => {
+  if (a === "login"  || a === "clock_in")  return "default";
+  if (a === "logout" || a === "clock_out") return "secondary";
+  return "outline";
+};
 
 export default function TimePage() {
   const [, setLocation] = useLocation();

@@ -13,7 +13,7 @@ function fmtTime(t: string) {
   return t?.slice(0, 5) ?? "";
 }
 function fmtDateTime(ts: string) {
-  return new Date(ts).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 export default function EmployeePortalPage() {
