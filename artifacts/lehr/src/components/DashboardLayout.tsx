@@ -20,17 +20,23 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const { companies, activeCompany, setActiveCompany, refreshCompanies } = useCompany();
   const [stats, setStats] = useState<SidebarStats>({ totalStaff: 0, clockedIn: 0, hoursToday: 0 });
+  // authReady prevents redirecting before auth state is confirmed (avoids race on fresh login)
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Subscribe to auth state changes — fires immediately with the current session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) {
         setLocation("/auth");
       } else {
         setUserEmail(session.user.email ?? null);
         refreshCompanies();
       }
+      setAuthReady(true);
     });
-  }, [setLocation, refreshCompanies]);
+    return () => subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!activeCompany) return;
@@ -220,6 +226,18 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       </div>
     </div>
   );
+
+  // Hold rendering until auth state is confirmed — prevents redirect loop on fresh login
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-400 text-sm">Loading…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex bg-slate-50 font-sans">
