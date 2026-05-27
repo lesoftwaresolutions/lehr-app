@@ -1,0 +1,27 @@
+"I am now moving the LEHR app to a final production state. I am experiencing some performance lag ('browsing/hanging') during the login and redirection process. I need a full system audit and optimization to ensure the app is fast, stable, and professional.
+
+Please perform the following optimizations:
+
+1. Auth & Performance Optimization:
+
+Eliminate Login Lag: Review the auth flow. Ensure there are no infinite loops in useEffect hooks during the redirection from Login $\rightarrow$ Dashboard. Implement a clean 'Loading' state so the user doesn't see a hanging page.
+Fast Redirects: Optimize the transition between the landing page, the payment gate, and the admin dashboard to ensure it feels instant.
+State Management: Optimize React components to prevent unnecessary re-renders, ensuring the UI is snappy and responsive.
+2. Supabase & Database Tuning:
+
+Query Optimization: Review all Supabase calls. Ensure we are fetching only the necessary columns and that the queries are optimized for speed.
+RLS (Row Level Security): Verify that Row Level Security is correctly implemented so that company_id filters data instantly and securely.
+Connection Handling: Ensure the supabaseClient is initialized once and reused across the app to prevent multiple connection delays.
+3. Full-System Functionality Check: Please audit every single feature to ensure they are 100% functional:
+
+The Kiosk: PIN entry $\rightarrow$ 4-button click $\rightarrow$ HH:mm timestamp $\rightarrow$ Auto-reset to PIN.
+The Rota: Admin creation $\rightarrow$ Data storage $\rightarrow$ WhatsApp/PDF Export.
+The Payments: Stripe Checkout $\rightarrow$ Webhook $\rightarrow$ subscription_status update to 'active'.
+The Dashboard: Employee management $\rightarrow$ Time log viewing $\rightarrow$ Manual edits.
+4. Deployment & Production Readiness:
+
+GitHub/Vercel Sync: Ensure all code is structured for a clean Vercel deployment with no build errors.
+Error Handling: Implement 'Global Error Boundaries' so that if one part of the app fails, the whole site doesn't crash.
+Asset Optimization: Ensure the LEHR logo and UI elements are optimized for fast loading on mobile devices.
+Final Goal: I want a professional, high-speed SaaS application that feels like a premium product. Please review the entire codebase and apply these optimizations now."
+

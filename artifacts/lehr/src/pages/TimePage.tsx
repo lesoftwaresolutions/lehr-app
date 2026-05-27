@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/CompanyContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +13,7 @@ type LogEntry = {
   id: string;
   action: string;
   timestamp: string;
-  employees: { full_name: string } | null;
+  employees: { full_name: string; company_id: string } | null;
 };
 
 function fmtDateTime(ts: string) {
@@ -38,21 +39,30 @@ const actionColor = (a: string): "default" | "secondary" | "outline" | "destruct
 
 export default function TimePage() {
   const [, setLocation] = useLocation();
+  const { activeCompany } = useCompany();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
 
+  const companyId = activeCompany?.id;
+
   const fetchLogs = useCallback(async () => {
+    if (!companyId) return;
     setIsLoading(true);
+    // Join with employees!inner so we can filter by company_id on the related table
     const { data } = await supabase
       .from("time_logs")
-      .select("id, action, timestamp, employees(full_name)")
+      .select("id, action, timestamp, employees!inner(full_name, company_id)")
       .gte("timestamp", `${dateFilter}T00:00:00`)
       .lte("timestamp", `${dateFilter}T23:59:59`)
       .order("timestamp", { ascending: false });
-    if (data) setLogs(data as unknown as LogEntry[]);
+    // Client-side filter in case PostgREST doesn't push the join filter
+    const filtered = (data ?? []).filter(
+      (l: any) => l.employees?.company_id === companyId
+    );
+    setLogs(filtered as unknown as LogEntry[]);
     setIsLoading(false);
-  }, [dateFilter]);
+  }, [dateFilter, companyId]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 

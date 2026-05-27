@@ -27,7 +27,7 @@ export default function StaffPage() {
   const fetchStaff = React.useCallback(async () => {
     if (!activeCompany) return;
     setIsLoading(true);
-    const { data, error } = await supabase.from('employees').select('*').eq('company_id', activeCompany.id).order('full_name');
+    const { data, error } = await supabase.from('employees').select('id, full_name, email, role, status, pin_code, company_id').eq('company_id', activeCompany.id).order('full_name');
     if (!error && data) setStaff(data);
     setIsLoading(false);
   }, [activeCompany]);

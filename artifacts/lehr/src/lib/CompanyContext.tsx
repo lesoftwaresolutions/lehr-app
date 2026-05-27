@@ -34,7 +34,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const refreshCompanies = useCallback(async (): Promise<Company[]> => {
     const { data } = await supabase
       .from("companies")
-      .select("*")
+      .select("id, name, owner_id, created_at")
       .order("name");
     const list = (data as Company[]) ?? [];
     setCompanies(list);

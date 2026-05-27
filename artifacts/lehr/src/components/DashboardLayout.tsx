@@ -24,26 +24,34 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    // Subscribe to auth state changes — fires immediately with the current session
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
+    // Get current session once for email display (no refreshCompanies — CompanyContext handles it)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) setUserEmail(session.user.email ?? null);
+      setAuthReady(true);
+    });
+
+    // Listen only for auth changes that affect this layout
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
         setLocation("/auth");
       } else {
         setUserEmail(session.user.email ?? null);
-        refreshCompanies();
+        setAuthReady(true);
       }
-      setAuthReady(true);
     });
     return () => subscription.unsubscribe();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Depend on company ID (primitive), not the object reference, to avoid spurious refetches
+  const companyId = activeCompany?.id;
+
   useEffect(() => {
-    if (!activeCompany) return;
+    if (!companyId) return;
     const today = new Date().toISOString().split("T")[0];
 
     Promise.all([
-      supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", activeCompany.id).eq("status", "active"),
+      supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "active"),
       supabase.from("time_logs")
         .select("employee_id, action, timestamp")
         .gte("timestamp", `${today}T00:00:00`)
@@ -51,7 +59,12 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
         .order("timestamp", { ascending: true }),
     ]).then(([empRes, logRes]) => {
       const totalStaff = empRes.count ?? 0;
-      const logs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
+      const empIdSet = new Set((empRes as any).data?.map((e: any) => e.id) ?? []);
+      const allLogs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
+      // Filter logs to this company's employees only (time_logs has no company_id column)
+      const logs = empIdSet.size > 0
+        ? allLogs.filter(l => empIdSet.has(l.employee_id))
+        : allLogs;
 
       // Normalise action names — supports both old (clock_in/out) and new (login/logout/break-out/break-in)
       const isLoginAct  = (a: string) => a === "login"     || a === "clock_in";
@@ -90,7 +103,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
         hoursToday: Math.round(totalMs / 3600000 * 10) / 10,
       });
     });
-  }, [activeCompany]);
+  }, [companyId]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
