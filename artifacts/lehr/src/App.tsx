@@ -29,7 +29,9 @@ function Router() {
       <Route path="/employee-login" component={EmployeeLoginPage} />
       <Route path="/employee-portal" component={EmployeePortalPage} />
       <Route path="/clock" component={KioskPage} />
-      <Route path="/clock/:companyId" component={CompanyKioskPage} />
+      <Route path="/clock/:companyId">
+        {(params: { companyId: string }) => <CompanyKioskPage companyId={params.companyId} />}
+      </Route>
       <Route path="/pick-company" component={CompanyPickerPage} />
       <Route path="/dashboard" component={DashboardPage} />
       <Route path="/dashboard/staff" component={StaffPage} />

@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
 import { Delete, AlertTriangle, Coffee, UserCheck, Clock } from "lucide-react";
 
@@ -89,9 +88,7 @@ const ACTION_CONFIG: Record<ActionType, { label: string; style: string; descript
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
-export default function CompanyKioskPage() {
-  const params = useParams<{ companyId: string }>();
-  const companyId = params?.companyId ?? "";
+export default function CompanyKioskPage({ companyId = "" }: { companyId?: string }) {
 
   const [company, setCompany] = useState<Company | null>(null);
   const [companyError, setCompanyError] = useState(false);
