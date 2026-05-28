@@ -24,19 +24,27 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    // Single auth subscription — fires immediately with INITIAL_SESSION so there is no
-    // race between getSession() and the subscriber. CompanyContext owns refreshCompanies().
+    // Hard timeout: if Supabase hasn't responded within 3 s (slow network, paused project,
+    // expired token waiting for refresh), force the user to /auth rather than spinning forever.
+    const timeout = setTimeout(() => {
+      setAuthReady(true);
+      setLocation("/auth");
+    }, 3000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      clearTimeout(timeout); // auth resolved — cancel the fallback
       if (!session) {
-        // SIGNED_OUT or no session on load → send to auth
         setLocation("/auth");
       } else {
         setUserEmail(session.user.email ?? null);
       }
-      // Mark auth as ready on first event (INITIAL_SESSION) so the spinner drops
       setAuthReady(true);
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -241,13 +249,20 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
     </div>
   );
 
-  // Hold rendering until auth state is confirmed — prevents redirect loop on fresh login
+  // Hold rendering until auth state is confirmed — prevents redirect loop on fresh login.
+  // The 3-second timeout above guarantees this block never persists more than 3 seconds.
   if (!authReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           <p className="text-slate-400 text-sm">Loading…</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors mt-1"
+          >
+            Having trouble? Click here to refresh.
+          </button>
         </div>
       </div>
     );

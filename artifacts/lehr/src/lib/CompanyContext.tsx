@@ -48,10 +48,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     return list;
   }, []);
 
-  // Re-load whenever auth state changes
+  // Re-load whenever auth state changes.
+  // A 5-second failsafe ensures isLoading never stays true if Supabase is slow/unresponsive.
   useEffect(() => {
     setIsLoading(true);
+
+    const timeout = setTimeout(() => {
+      setIsLoading(false); // unblock the UI even if auth never responds
+    }, 5000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      clearTimeout(timeout);
       if (session) {
         await refreshCompanies();
       } else {
@@ -60,7 +67,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
       setIsLoading(false);
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, [refreshCompanies]);
 
   const setActiveCompany = (c: Company) => {
