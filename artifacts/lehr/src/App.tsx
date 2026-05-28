@@ -6,24 +6,19 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
-// Lazy-load every page so the initial JS bundle stays small.
-// Only the current route's chunk is downloaded on first visit.
-const LandingPage          = lazy(() => import("@/pages/LandingPage"));
-const AuthPage             = lazy(() => import("@/pages/AuthPage"));
-const DashboardPage        = lazy(() => import("@/pages/DashboardPage"));
-const StaffPage            = lazy(() => import("@/pages/StaffPage"));
-const RotaPage             = lazy(() => import("@/pages/RotaPage"));
-const TimePage             = lazy(() => import("@/pages/TimePage"));
-const LeavePage            = lazy(() => import("@/pages/LeavePage"));
-const KioskPage            = lazy(() => import("@/pages/KioskPage"));
-const CompanyPickerPage    = lazy(() => import("@/pages/CompanyPickerPage"));
-const ResetPasswordPage    = lazy(() => import("@/pages/ResetPasswordPage"));
-const EmployeeLoginPage    = lazy(() => import("@/pages/EmployeeLoginPage"));
-const EmployeePortalPage   = lazy(() => import("@/pages/EmployeePortalPage"));
-const CompanyKioskPage     = lazy(() => import("@/pages/CompanyKioskPage"));
-const NotFound             = lazy(() => import("@/pages/not-found"));
+// Lazy-load every page — only the visited route's chunk is downloaded.
+const LandingPage       = lazy(() => import("@/pages/LandingPage"));
+const AuthPage          = lazy(() => import("@/pages/AuthPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"));
+const CompanyKioskPage  = lazy(() => import("@/pages/CompanyKioskPage"));
+const CompanyPickerPage = lazy(() => import("@/pages/CompanyPickerPage"));
+const DashboardPage     = lazy(() => import("@/pages/DashboardPage"));
+const StaffPage         = lazy(() => import("@/pages/StaffPage"));
+const RotaPage          = lazy(() => import("@/pages/RotaPage"));
+const TimePage          = lazy(() => import("@/pages/TimePage"));
+const LeavePage         = lazy(() => import("@/pages/LeavePage"));
+const NotFound          = lazy(() => import("@/pages/not-found"));
 
-// Minimal full-page spinner shown while a lazy chunk loads
 function PageLoader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -33,40 +28,37 @@ function PageLoader() {
 }
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 30_000,
-    },
-  },
+  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
 
 function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
-        <Route path="/"                  component={LandingPage} />
-        <Route path="/auth"              component={AuthPage} />
-        <Route path="/reset-password"    component={ResetPasswordPage} />
-        <Route path="/employee-login"    component={EmployeeLoginPage} />
-        <Route path="/employee-portal"   component={EmployeePortalPage} />
-        <Route path="/clock"             component={KioskPage} />
+        <Route path="/"               component={LandingPage} />
+        <Route path="/auth"           component={AuthPage} />
+        <Route path="/reset-password" component={ResetPasswordPage} />
+
+        {/* Company kiosk — the single entry point for all staff clock-in/out */}
         <Route path="/clock/:companyId">
-          {(params: { companyId: string }) => <CompanyKioskPage companyId={params.companyId} />}
+          {(params: { companyId: string }) => (
+            <CompanyKioskPage companyId={params.companyId} />
+          )}
         </Route>
-        <Route path="/pick-company"      component={CompanyPickerPage} />
-        <Route path="/dashboard"         component={DashboardPage} />
-        <Route path="/dashboard/staff"   component={StaffPage} />
-        <Route path="/dashboard/rota"    component={RotaPage} />
-        <Route path="/dashboard/time"    component={TimePage} />
-        <Route path="/dashboard/leave"   component={LeavePage} />
-        <Route                           component={NotFound} />
+
+        <Route path="/pick-company"     component={CompanyPickerPage} />
+        <Route path="/dashboard"        component={DashboardPage} />
+        <Route path="/dashboard/staff"  component={StaffPage} />
+        <Route path="/dashboard/rota"   component={RotaPage} />
+        <Route path="/dashboard/time"   component={TimePage} />
+        <Route path="/dashboard/leave"  component={LeavePage} />
+        <Route                          component={NotFound} />
       </Switch>
     </Suspense>
   );
 }
 
-function App() {
+export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -82,5 +74,3 @@ function App() {
     </ErrorBoundary>
   );
 }
-
-export default App;

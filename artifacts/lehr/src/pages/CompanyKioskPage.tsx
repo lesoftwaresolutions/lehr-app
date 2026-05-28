@@ -244,7 +244,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     );
     setPhase("success");
     fetchLogs();
-    scheduleReset(2000); // 2-second auto-reset per requirement
+    scheduleReset(3000); // 3-second auto-reset
   };
 
   // ── Derived state ─────────────────────────────────────────────────────────

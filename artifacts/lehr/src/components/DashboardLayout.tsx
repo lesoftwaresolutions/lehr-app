@@ -24,20 +24,17 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    // Get current session once for email display (no refreshCompanies — CompanyContext handles it)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setUserEmail(session.user.email ?? null);
-      setAuthReady(true);
-    });
-
-    // Listen only for auth changes that affect this layout
+    // Single auth subscription — fires immediately with INITIAL_SESSION so there is no
+    // race between getSession() and the subscriber. CompanyContext owns refreshCompanies().
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || !session) {
+      if (!session) {
+        // SIGNED_OUT or no session on load → send to auth
         setLocation("/auth");
       } else {
         setUserEmail(session.user.email ?? null);
-        setAuthReady(true);
       }
+      // Mark auth as ready on first event (INITIAL_SESSION) so the spinner drops
+      setAuthReady(true);
     });
     return () => subscription.unsubscribe();
   // eslint-disable-next-line react-hooks/exhaustive-deps

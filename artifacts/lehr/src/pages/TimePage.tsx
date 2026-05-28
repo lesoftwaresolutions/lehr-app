@@ -67,8 +67,9 @@ export default function TimePage() {
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
   const openKiosk = () => {
+    if (!activeCompany) return;
     const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
-    window.open(`${base}/clock`, "_blank", "noopener");
+    window.open(`${base}/clock/${activeCompany.id}`, "_blank", "noopener");
   };
 
   return (
