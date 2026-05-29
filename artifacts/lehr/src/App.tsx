@@ -3,7 +3,9 @@ import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider } from "@/lib/AuthContext";
 import { CompanyProvider } from "@/lib/CompanyContext";
+import { AuthGuard } from "@/components/AuthGuard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Lazy-load every page — only the visited route's chunk is downloaded.
@@ -22,7 +24,7 @@ const NotFound          = lazy(() => import("@/pages/not-found"));
 function PageLoader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <p className="text-slate-400 text-sm">Loading...</p>
     </div>
   );
 }
@@ -31,28 +33,46 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
 
+// All routes that require a valid session + active company.
+// CompanyProvider lives here — the kiosk never touches it.
+function ProtectedApp() {
+  return (
+    <CompanyProvider>
+      <AuthGuard>
+        <Suspense fallback={<PageLoader />}>
+          <Switch>
+            <Route path="/pick-company"    component={CompanyPickerPage} />
+            <Route path="/dashboard"       component={DashboardPage} />
+            <Route path="/dashboard/staff" component={StaffPage} />
+            <Route path="/dashboard/rota"  component={RotaPage} />
+            <Route path="/dashboard/time"  component={TimePage} />
+            <Route path="/dashboard/leave" component={LeavePage} />
+            <Route component={NotFound} />
+          </Switch>
+        </Suspense>
+      </AuthGuard>
+    </CompanyProvider>
+  );
+}
+
 function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
+        {/* Public — no auth required */}
         <Route path="/"               component={LandingPage} />
         <Route path="/auth"           component={AuthPage} />
         <Route path="/reset-password" component={ResetPasswordPage} />
 
-        {/* Company kiosk — the single entry point for all staff clock-in/out */}
+        {/* Kiosk — completely public, no CompanyProvider, no AuthGuard */}
         <Route path="/clock/:companyId">
           {(params: { companyId: string }) => (
             <CompanyKioskPage companyId={params.companyId} />
           )}
         </Route>
 
-        <Route path="/pick-company"     component={CompanyPickerPage} />
-        <Route path="/dashboard"        component={DashboardPage} />
-        <Route path="/dashboard/staff"  component={StaffPage} />
-        <Route path="/dashboard/rota"   component={RotaPage} />
-        <Route path="/dashboard/time"   component={TimePage} />
-        <Route path="/dashboard/leave"  component={LeavePage} />
-        <Route                          component={NotFound} />
+        {/* Everything else requires auth */}
+        <Route component={ProtectedApp} />
       </Switch>
     </Suspense>
   );
@@ -62,14 +82,14 @@ export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <CompanyProvider>
+        <AuthProvider>
           <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "")}>
               <Router />
             </WouterRouter>
             <Toaster />
           </TooltipProvider>
-        </CompanyProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );

@@ -1,6 +1,7 @@
 import { useState, useEffect, ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/lib/AuthContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,36 +18,13 @@ type SidebarStats = { totalStaff: number; clockedIn: number; hoursToday: number 
 
 export function DashboardLayout({ children, title }: { children: ReactNode; title: string }) {
   const [location, setLocation] = useLocation();
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const { companies, activeCompany, setActiveCompany, refreshCompanies } = useCompany();
+  const { session } = useAuth();
+  const { companies, activeCompany, setActiveCompany } = useCompany();
   const [stats, setStats] = useState<SidebarStats>({ totalStaff: 0, clockedIn: 0, hoursToday: 0 });
-  // authReady prevents redirecting before auth state is confirmed (avoids race on fresh login)
-  const [authReady, setAuthReady] = useState(false);
 
-  useEffect(() => {
-    // Hard timeout: if Supabase hasn't responded within 3 s (slow network, paused project,
-    // expired token waiting for refresh), force the user to /auth rather than spinning forever.
-    const timeout = setTimeout(() => {
-      setAuthReady(true);
-      setLocation("/auth");
-    }, 3000);
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      clearTimeout(timeout); // auth resolved — cancel the fallback
-      if (!session) {
-        setLocation("/auth");
-      } else {
-        setUserEmail(session.user.email ?? null);
-      }
-      setAuthReady(true);
-    });
-
-    return () => {
-      clearTimeout(timeout);
-      subscription.unsubscribe();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // AuthGuard (in App.tsx) already ensures session exists before rendering this component.
+  // No auth subscription needed here — that would create a second listener and cause loops.
+  const userEmail = session?.user?.email ?? null;
 
   // Depend on company ID (primitive), not the object reference, to avoid spurious refetches
   const companyId = activeCompany?.id;
@@ -66,17 +44,14 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       const totalStaff = empRes.count ?? 0;
       const empIdSet = new Set((empRes as any).data?.map((e: any) => e.id) ?? []);
       const allLogs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
-      // Filter logs to this company's employees only (time_logs has no company_id column)
       const logs = empIdSet.size > 0
         ? allLogs.filter(l => empIdSet.has(l.employee_id))
         : allLogs;
 
-      // Normalise action names — supports both old (clock_in/out) and new (login/logout/break-out/break-in)
       const isLoginAct  = (a: string) => a === "login"     || a === "clock_in";
       const isLogoutAct = (a: string) => a === "logout"    || a === "clock_out";
       const isBreakEnd  = (a: string) => a === "break-in"  || a === "break_out";
 
-      // Group by employee and compute hours + clocked-in status
       const byEmp: Record<string, { action: string; timestamp: string }[]> = {};
       logs.forEach(l => {
         if (!byEmp[l.employee_id]) byEmp[l.employee_id] = [];
@@ -86,7 +61,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       let totalMs = 0;
       const clockedInSet = new Set<string>();
 
-      Object.entries(byEmp).forEach(([empId, events]) => {
+      Object.entries(byEmp).forEach(([, events]) => {
         let lastIn: string | null = null;
         let isIn = false;
         events.forEach(e => {
@@ -97,7 +72,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
           }
         });
         if (isIn) {
-          clockedInSet.add(empId);
+          clockedInSet.add(events[0]?.timestamp ?? ""); // just mark as clocked in
           if (lastIn) totalMs += Date.now() - new Date(lastIn).getTime();
         }
       });
@@ -248,25 +223,6 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       </div>
     </div>
   );
-
-  // Hold rendering until auth state is confirmed — prevents redirect loop on fresh login.
-  // The 3-second timeout above guarantees this block never persists more than 3 seconds.
-  if (!authReady) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-slate-400 text-sm">Loading…</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors mt-1"
-          >
-            Having trouble? Click here to refresh.
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex bg-slate-50 font-sans">
