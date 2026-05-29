@@ -108,6 +108,7 @@ const ACTION_LABELS: Record<KioskAction, string> = {
 export default function CompanyKioskPage({ companyId = "" }: { companyId?: string }) {
   const [company, setCompany]           = useState<Company | null>(null);
   const [companyError, setCompanyError] = useState(false);
+  const [companyLoading, setCompanyLoading] = useState(true);
   const [pin, setPin]                   = useState("");
   const [phase, setPhase]               = useState<Phase>("idle");
   const [foundEmp, setFoundEmp]         = useState<FoundEmployee | null>(null);
@@ -128,14 +129,49 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     return () => clearInterval(t);
   }, []);
 
-  // Load company
+  // Load company — public anon key, no session required.
+  // Only flags companyError when the record is genuinely not found (data === null, no error).
+  // Auth / RLS / network errors are silently ignored so the kiosk never shows a false
+  // "invalid company link" just because the admin session hasn't loaded yet.
   useEffect(() => {
-    if (!companyId) return;
-    supabase.from("companies").select("*").eq("id", companyId).maybeSingle()
-      .then(({ data, error }) => {
-        if (error || !data) { setCompanyError(true); return; }
-        setCompany({ id: data.id, name: data.name, break_allowance_minutes: data.break_allowance_minutes ?? null });
-      });
+    if (!companyId) {
+      setCompanyLoading(false);
+      setCompanyError(true);
+      return;
+    }
+    setCompanyLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("companies")
+          .select("id, name, break_allowance_minutes")
+          .eq("id", companyId)
+          .maybeSingle();
+
+        if (error) {
+          // Permission / RLS / network error — NOT a "not found".
+          // Don't show "Invalid company link"; leave company null so the spinner shows.
+          // A retry is not needed; employees can still PIN in if RLS allows time_logs inserts.
+          return;
+        }
+
+        if (!data) {
+          // maybeSingle() returned null with no error → company truly doesn't exist.
+          setCompanyError(true);
+          return;
+        }
+
+        setCompany({
+          id: data.id,
+          name: data.name,
+          break_allowance_minutes: data.break_allowance_minutes ?? null,
+        });
+      } catch {
+        // Network failure — leave loading state; don't error the kiosk.
+      } finally {
+        setCompanyLoading(false);
+      }
+    })();
   }, [companyId]);
 
   // Fetch today's time logs for right panel
@@ -254,8 +290,18 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   const empLive = foundEmp ? [...working, ...onBreak].find(e => e.id === foundEmp.id) : null;
   const empOnBreak = foundEmp ? onBreak.some(e => e.id === foundEmp.id) : false;
 
-  // ── Error / not found screens ─────────────────────────────────────────────
-  if (!companyId || companyError) {
+  // ── Loading / error screens ───────────────────────────────────────────────
+  // Spinner first — never flash the error screen before the fetch is done.
+  if (companyLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Only reached after fetch is complete and company is confirmed not found.
+  if (companyError || !company) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-center p-8">
         <div>
@@ -263,14 +309,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           <p className="text-xl font-semibold">Invalid company link.</p>
           <p className="text-slate-500 text-sm mt-2">Please ask your manager for the correct kiosk URL.</p>
         </div>
-      </div>
-    );
-  }
-
-  if (!company) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
