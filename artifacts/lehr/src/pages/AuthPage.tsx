@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
-import { useCompany } from "@/lib/CompanyContext";
+import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,10 +10,30 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
+function friendlyAuthError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("too many") || m.includes("rate") || m.includes("429")) {
+    return "Too many attempts — please wait a few minutes and try again.";
+  }
+  if (m.includes("invalid login") || m.includes("invalid credentials") || m.includes("email not confirmed")) {
+    return "Incorrect email or password. Please check and try again.";
+  }
+  if (m.includes("user already registered") || m.includes("already exists")) {
+    return "An account with this email already exists. Try signing in instead.";
+  }
+  if (m.includes("password") && m.includes("characters")) {
+    return "Password must be at least 6 characters.";
+  }
+  if (m.includes("network") || m.includes("fetch")) {
+    return "Network error — check your connection and try again.";
+  }
+  return message;
+}
+
 export default function AuthPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { refreshCompanies, setActiveCompany } = useCompany();
+  const { session, authReady } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,20 +41,26 @@ export default function AuthPage() {
   const [connStatus, setConnStatus] = useState<"checking" | "ok" | "error">("checking");
   const [connError, setConnError] = useState("");
 
+  // Redirect to dashboard if already logged in
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
+    if (authReady && session) {
+      setLocation("/dashboard");
+    }
+  }, [authReady, session, setLocation]);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ error }) => {
       if (error) {
         setConnStatus("error");
         setConnError(error.message || String(error));
       } else {
         setConnStatus("ok");
-        if (session) setLocation("/dashboard");
       }
     }).catch((err: any) => {
       setConnStatus("error");
       setConnError(err?.message || "Cannot reach Supabase — check project URL and key.");
     });
-  }, [setLocation]);
+  }, []);
 
   const handleForgotPassword = async () => {
     if (!email) {
@@ -51,7 +77,7 @@ export default function AuthPage() {
     } catch (error: any) {
       toast({
         title: "Could not send reset email",
-        description: error?.message || "An unexpected error occurred.",
+        description: friendlyAuthError(error?.message || "An unexpected error occurred."),
         variant: "destructive",
       });
     } finally {
@@ -64,25 +90,12 @@ export default function AuthPage() {
       setIsLoading(true);
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-
-      // Load companies for this user
-      const companies = await refreshCompanies();
-      if (companies.length === 0) {
-        // Signed in but no companies — go to dashboard anyway
-        toast({ title: "Welcome back!" });
-        setLocation("/dashboard");
-      } else if (companies.length === 1) {
-        setActiveCompany(companies[0]);
-        toast({ title: "Welcome back!", description: companies[0].name });
-        setLocation("/dashboard");
-      } else {
-        // Multiple companies — let them pick
-        setLocation("/pick-company");
-      }
+      // AuthGuard + CompanyProvider in ProtectedApp handle company loading after redirect
+      setLocation("/dashboard");
     } catch (error: any) {
       toast({
         title: "Sign in failed",
-        description: error?.message || "An unexpected error occurred.",
+        description: friendlyAuthError(error?.message || "An unexpected error occurred."),
         variant: "destructive",
       });
     } finally {
@@ -103,7 +116,7 @@ export default function AuthPage() {
       const user = data.user;
       if (!user) throw new Error("Sign up succeeded but no user returned.");
 
-      // Create the company record immediately (session is available since email confirmation is off)
+      // Create the company record immediately
       const { data: company, error: companyError } = await supabase
         .from("companies")
         .insert([{ name: companyName.trim(), owner_id: user.id }])
@@ -111,21 +124,22 @@ export default function AuthPage() {
         .single();
 
       if (companyError) {
-        // Company creation failed — still let them in, they can add later
         toast({
           title: "Account created",
           description: "Your account is ready. You can add your company from the dashboard.",
         });
       } else {
-        setActiveCompany(company);
+        // Store the new company ID so CompanyProvider picks it up after redirect
+        localStorage.setItem("lehr_active_company_id", company.id);
         toast({ title: "Account created!", description: `Welcome to LEHR — ${company.name} is ready.` });
       }
 
+      // AuthGuard + CompanyProvider handle the rest after we land on /dashboard
       setLocation("/dashboard");
     } catch (error: any) {
       toast({
         title: "Sign up failed",
-        description: error?.message || "An unexpected error occurred.",
+        description: friendlyAuthError(error?.message || "An unexpected error occurred."),
         variant: "destructive",
       });
     } finally {
