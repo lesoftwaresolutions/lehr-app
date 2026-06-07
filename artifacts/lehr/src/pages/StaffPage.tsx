@@ -46,33 +46,41 @@ export default function StaffPage() {
   };
 
   const handleSave = async () => {
-    if (!formData.full_name || !formData.pin_code) {
-      toast({ title: "Error", description: "Name and PIN are required.", variant: "destructive" });
+    if (!formData.full_name || !formData.pin_code || !formData.email) {
+      toast({ title: "Error", description: "Name, Email, and PIN are required.", variant: "destructive" });
       return;
     }
     
-    const payload = {
-      ...formData,
-      company_id: activeCompany?.id,
-    };
+    try {
+      if (editingStaff) {
+        const { error } = await supabase.from('employees').update({
+          ...formData,
+          company_id: activeCompany?.id,
+        }).eq('id', editingStaff.id);
+        if (error) throw error;
+      } else {
+        // Call the new backend route to create the login account
+        const response = await fetch(`${window.location.origin}/api/create-employee`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...formData,
+            company_id: activeCompany?.id,
+          }),
+        });
 
-    let error;
-    if (editingStaff) {
-      const res = await supabase.from('employees').update(payload).eq('id', editingStaff.id);
-      error = res.error;
-    } else {
-      const res = await supabase.from('employees').insert([payload]);
-      error = res.error;
-    }
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Failed to create staff member");
+      }
 
-    if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } else {
       toast({ title: "Success", description: `Staff member ${editingStaff ? 'updated' : 'added'}.` });
       setIsDialogOpen(false);
       fetchStaff();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
+
 
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('employees').delete().eq('id', id);
