@@ -3,7 +3,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { Delete, AlertTriangle, Coffee, UserCheck, Clock, CheckCircle, XCircle } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-type KioskAction = "login" | "logout" | "break-out" | "break-in";
+// Standardized actions: clock_in, clock_out, break_start, break_end
+type KioskAction = "clock_in" | "clock_out" | "break_start" | "break_end";
 type Phase = "idle" | "lookup" | "action" | "processing" | "success" | "fail";
 
 interface Company { id: string; name: string; break_allowance_minutes: number | null; }
@@ -24,11 +25,11 @@ function fmtElapsed(ms: number) {
   return `${s}s`;
 }
 
-// ── Action normalisation (handles both old and new action names) ──────────────
-function isLoginAction(a: string)     { return a === "login"     || a === "clock_in"; }
-function isLogoutAction(a: string)    { return a === "logout"    || a === "clock_out"; }
-function isBreakStartAction(a: string){ return a === "break-out" || a === "break_in"; }
-function isBreakEndAction(a: string)  { return a === "break-in"  || a === "break_out"; }
+// ── Action status helpers ───────────────────────────────────────────────────
+function isLoginAction(a: string)     { return a === "clock_in"; }
+function isLogoutAction(a: string)    { return a === "clock_out"; }
+function isBreakStartAction(a: string){ return a === "break_start"; }
+function isBreakEndAction(a: string)  { return a === "break_end"; }
 
 // ── Status computation ────────────────────────────────────────────────────────
 type RawLog = {
@@ -53,15 +54,21 @@ function computeStatus(logs: RawLog[], now: number) {
     let lastWork: number | null = null, lastBreak: number | null = null;
 
     events.forEach(({ action, ts }) => {
-      if (isLoginAction(action) || isBreakEndAction(action)) {
+      // Legacy support: handle old action names if they exist in DB
+      const standardAction = (action === 'login') ? 'clock_in' :
+                             (action === 'logout') ? 'clock_out' :
+                             (action === 'break-out' || action === 'break_in' && !isBreakEndAction(action)) ? 'break_start' :
+                             (action === 'break-in' || action === 'break_out' && !isBreakStartAction(action)) ? 'break_end' : action;
+
+      if (isLoginAction(standardAction) || isBreakEndAction(standardAction)) {
         if (lastBreak !== null) { breakMs += ts - lastBreak; lastBreak = null; }
         lastWork = ts;
       }
-      if (isBreakStartAction(action)) {
+      if (isBreakStartAction(standardAction)) {
         if (lastWork !== null) { workMs += ts - lastWork; lastWork = null; }
         lastBreak = ts;
       }
-      if (isLogoutAction(action)) {
+      if (isLogoutAction(standardAction)) {
         if (lastWork !== null) { workMs += ts - lastWork; lastWork = null; }
         if (lastBreak !== null) { breakMs += ts - lastBreak; lastBreak = null; }
       }
@@ -71,8 +78,13 @@ function computeStatus(logs: RawLog[], now: number) {
     if (lastBreak !== null) breakMs += now - lastBreak;
 
     const last = events[events.length - 1]?.action ?? "";
-    if (isLoginAction(last) || isBreakEndAction(last)) working.push({ id, name, workMs, breakMs });
-    else if (isBreakStartAction(last))                 onBreak.push({ id, name, workMs, breakMs });
+    const lastStandard = (last === 'login') ? 'clock_in' :
+                         (last === 'logout') ? 'clock_out' :
+                         (last === 'break-out' || last === 'break_in' && !isBreakEndAction(last)) ? 'break_start' :
+                         (last === 'break-in' || last === 'break_out' && !isBreakStartAction(last)) ? 'break_end' : last;
+
+    if (isLoginAction(lastStandard) || isBreakEndAction(lastStandard)) working.push({ id, name, workMs, breakMs });
+    else if (isBreakStartAction(lastStandard))                         onBreak.push({ id, name, workMs, breakMs });
   });
 
   return { working, onBreak };
@@ -81,8 +93,13 @@ function computeStatus(logs: RawLog[], now: number) {
 function computeTotalWork(logs: { action: string; ts: number }[]) {
   let workMs = 0, lastWork: number | null = null;
   logs.forEach(({ action, ts }) => {
-    if (isLoginAction(action) || isBreakEndAction(action)) lastWork = ts;
-    if ((isBreakStartAction(action) || isLogoutAction(action)) && lastWork !== null) {
+    const standardAction = (action === 'login') ? 'clock_in' :
+                           (action === 'logout') ? 'clock_out' :
+                           (action === 'break-out') ? 'break_start' :
+                           (action === 'break-in') ? 'break_end' : action;
+
+    if (isLoginAction(standardAction) || isBreakEndAction(standardAction)) lastWork = ts;
+    if ((isBreakStartAction(standardAction) || isLogoutAction(standardAction)) && lastWork !== null) {
       workMs += ts - lastWork; lastWork = null;
     }
   });
@@ -91,17 +108,17 @@ function computeTotalWork(logs: { action: string; ts: number }[]) {
 
 // ── Button config ─────────────────────────────────────────────────────────────
 const BUTTONS: { action: KioskAction; label: string; bg: string; text: string; ring: string }[] = [
-  { action: "login",     label: "Login",     bg: "bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600", text: "text-white", ring: "ring-emerald-300" },
-  { action: "logout",    label: "Logout",    bg: "bg-rose-600    hover:bg-rose-500    active:bg-rose-700",    text: "text-white", ring: "ring-rose-300" },
-  { action: "break-out", label: "Break-Out", bg: "bg-amber-400   hover:bg-amber-300   active:bg-amber-500",   text: "text-slate-900", ring: "ring-amber-200" },
-  { action: "break-in",  label: "Break-In",  bg: "bg-blue-500    hover:bg-blue-400    active:bg-blue-600",    text: "text-white", ring: "ring-blue-300" },
+  { action: "clock_in",    label: "Clock In",    bg: "bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600", text: "text-white", ring: "ring-emerald-300" },
+  { action: "clock_out",   label: "Clock Out",   bg: "bg-rose-600    hover:bg-rose-500    active:bg-rose-700",    text: "text-white", ring: "ring-rose-300" },
+  { action: "break_start", label: "Break Out",   bg: "bg-amber-400   hover:bg-amber-300   active:bg-amber-500",   text: "text-slate-900", ring: "ring-amber-200" },
+  { action: "break_end",   label: "Break In",    bg: "bg-blue-500    hover:bg-blue-400    active:bg-blue-600",    text: "text-white", ring: "ring-blue-300" },
 ];
 
 const ACTION_LABELS: Record<KioskAction, string> = {
-  "login":     "Logged in",
-  "logout":    "Logged out",
-  "break-out": "Break started",
-  "break-in":  "Break ended",
+  "clock_in":    "Clocked in",
+  "clock_out":   "Clocked out",
+  "break_start": "Break started",
+  "break_end":   "Break ended",
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -118,7 +135,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   const [rawLogs, setRawLogs]           = useState<RawLog[]>([]);
   const [tick, setTick]                 = useState(Date.now());
   const [clock, setClock]               = useState(new Date());
-  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const breakAllowance = company?.break_allowance_minutes ?? 30;
@@ -130,9 +146,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   }, []);
 
   // Load company — public anon key, no session required.
-  // Only flags companyError when the record is genuinely not found (data === null, no error).
-  // Auth / RLS / network errors are silently ignored so the kiosk never shows a false
-  // "invalid company link" just because the admin session hasn't loaded yet.
   useEffect(() => {
     if (!companyId) {
       setCompanyLoading(false);
@@ -148,18 +161,8 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           .eq("id", companyId)
           .maybeSingle();
 
-        if (error) {
-          // Permission / RLS / network error — NOT a "not found".
-          // Don't show "Invalid company link"; leave company null so the spinner shows.
-          // A retry is not needed; employees can still PIN in if RLS allows time_logs inserts.
-          return;
-        }
-
-        if (!data) {
-          // maybeSingle() returned null with no error → company truly doesn't exist.
-          setCompanyError(true);
-          return;
-        }
+        if (error) return;
+        if (!data) { setCompanyError(true); return; }
 
         setCompany({
           id: data.id,
@@ -167,7 +170,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           break_allowance_minutes: data.break_allowance_minutes ?? null,
         });
       } catch {
-        // Network failure — leave loading state; don't error the kiosk.
       } finally {
         setCompanyLoading(false);
       }
@@ -181,19 +183,31 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     const { data } = await supabase
       .from("time_logs")
       .select("employee_id, action, timestamp, employees!inner(full_name, company_id)")
+      .eq("company_id", companyId)
       .gte("timestamp", `${today}T00:00:00`)
       .order("timestamp", { ascending: true });
     if (data) {
-      setRawLogs((data as any[]).filter(l => l.employees?.company_id === companyId));
+      setRawLogs(data as any[]);
     }
   }, [companyId]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
+  // Real-time subscription
   useEffect(() => {
-    pollRef.current = setInterval(fetchLogs, 30_000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [fetchLogs]);
+    if (!companyId) return;
+    const channel = supabase.channel('kiosk-realtime')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'time_logs',
+        filter: `company_id=eq.${companyId}`
+      }, () => {
+        fetchLogs();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [companyId, fetchLogs]);
 
   // ── PIN handlers ─────────────────────────────────────────────────────────
   const resetToIdle = () => {
@@ -224,41 +238,45 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
   const lookupPin = async (enteredPin: string) => {
     setPhase("lookup");
-    const { data: emps } = await supabase
-      .from("employees")
-      .select("id, full_name")
-      .eq("pin_code", enteredPin)
-      .eq("company_id", companyId)
-      .eq("status", "active")
-      .limit(1);
+    // 🚀 SECURE PIN VERIFICATION VIA RPC
+    const { data, error: rpcError } = await supabase.rpc('verify_employee_pin', {
+      p_company_id: companyId,
+      p_pin_code: enteredPin
+    });
 
-    if (!emps || emps.length === 0) {
+    if (rpcError || !data || data.length === 0) {
       setError("PIN not recognised. Please try again.");
       setPin(""); setPhase("idle");
       setTimeout(() => setError(null), 3000);
       return;
     }
-    setFoundEmp({ id: emps[0].id, full_name: emps[0].full_name });
+    setFoundEmp({ id: data[0].id, full_name: data[0].full_name });
     setPhase("action");
   };
 
   const handleAction = async (action: KioskAction) => {
-    if (!foundEmp) return;
+    if (!foundEmp || !companyId) return;
     setPhase("processing");
     const now = new Date();
 
     const { error: insertError } = await supabase
       .from("time_logs")
-      .insert([{ employee_id: foundEmp.id, action, timestamp: now.toISOString() }]);
+      .insert([{
+        employee_id: foundEmp.id,
+        company_id: companyId,
+        action,
+        timestamp: now.toISOString()
+      }]);
 
     if (insertError) {
+      console.error("Kiosk: Error inserting time log:", insertError);
       setPhase("fail");
       return;
     }
 
     // Compute total hours for logout message
     let totalHoursStr = "";
-    if (action === "logout") {
+    if (action === "clock_out") {
       const today = now.toISOString().split("T")[0];
       const { data: todayLogs } = await supabase
         .from("time_logs")
@@ -274,24 +292,20 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     const timeStr = fmt24(now);
     setSuccessMsg(`${ACTION_LABELS[action]} at ${timeStr}`);
     setSuccessSub(
-      action === "break-out" ? `${breakAllowance} min break allowance` :
-      action === "logout"    ? totalHoursStr.replace(" · ", "") :
+      action === "break_start" ? `${breakAllowance} min break allowance` :
+      action === "clock_out"    ? totalHoursStr.replace(" · ", "") :
       ""
     );
     setPhase("success");
-    fetchLogs();
     scheduleReset(3000); // 3-second auto-reset
   };
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const { working, onBreak } = computeStatus(rawLogs, tick);
 
-  // Employee's current status for display
   const empLive = foundEmp ? [...working, ...onBreak].find(e => e.id === foundEmp.id) : null;
   const empOnBreak = foundEmp ? onBreak.some(e => e.id === foundEmp.id) : false;
 
-  // ── Loading / error screens ───────────────────────────────────────────────
-  // Spinner first — never flash the error screen before the fetch is done.
   if (companyLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -300,7 +314,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     );
   }
 
-  // Only reached after fetch is complete and company is confirmed not found.
   if (companyError || !company) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-center p-8">
@@ -315,11 +328,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
   return (
     <div className="min-h-screen bg-slate-900 flex select-none overflow-hidden">
-
-      {/* ═══════════ LEFT PANEL — PIN + Actions ═══════════ */}
       <div className="flex flex-col items-center justify-center w-full md:w-[45%] p-6 md:p-10 border-r border-slate-800">
-
-        {/* Logo + live clock */}
         <div className="text-center mb-8 w-full">
           <div className="flex items-center justify-center gap-3 mb-5">
             <img src="/logo.jpeg" alt="LEHR" className="h-8 object-contain rounded" />
@@ -333,7 +342,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </p>
         </div>
 
-        {/* ─── SUCCESS screen ─── */}
         {phase === "success" && (
           <div className="w-full max-w-sm text-center bg-slate-800 rounded-2xl border border-slate-700 p-8">
             <CheckCircle size={52} className="text-emerald-400 mx-auto mb-4" />
@@ -344,7 +352,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </div>
         )}
 
-        {/* ─── FAIL screen ─── */}
         {phase === "fail" && (
           <div className="w-full max-w-sm text-center bg-rose-900/30 rounded-2xl border border-rose-700/50 p-8">
             <XCircle size={52} className="text-rose-400 mx-auto mb-4" />
@@ -359,11 +366,8 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </div>
         )}
 
-        {/* ─── PIN + button area ─── */}
         {phase !== "success" && phase !== "fail" && (
           <div className="w-full max-w-sm">
-
-            {/* Employee greeting card (shown in "action" + "processing" phase) */}
             {(phase === "action" || phase === "processing") && foundEmp && (
               <div className="mb-6 bg-slate-800 rounded-xl p-4 text-center border border-slate-700">
                 <p className="text-white font-bold text-xl">{foundEmp.full_name}</p>
@@ -379,7 +383,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </div>
             )}
 
-            {/* PIN dots — shown only in idle / lookup */}
             {(phase === "idle" || phase === "lookup") && (
               <>
                 <div className="flex gap-3 justify-center mb-5">
@@ -403,7 +406,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </>
             )}
 
-            {/* ── 4 large action buttons — shown only after PIN verified ── */}
             {phase === "action" && (
               <>
                 <div className="grid grid-cols-2 gap-3 mb-4">
@@ -426,14 +428,12 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </>
             )}
 
-            {/* Processing spinner */}
             {phase === "processing" && (
               <div className="flex justify-center py-8">
                 <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               </div>
             )}
 
-            {/* Numpad — shown in idle / lookup */}
             {(phase === "idle" || phase === "lookup") && (
               <div className="grid grid-cols-3 gap-3">
                 {["1","2","3","4","5","6","7","8","9","clear","0","⌫"].map(key => (
@@ -456,10 +456,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
         )}
       </div>
 
-      {/* ═══════════ RIGHT PANEL — Company Status ═══════════ */}
       <div className="hidden md:flex flex-col w-[55%] p-10 overflow-y-auto">
-
-        {/* Company name */}
         <div className="mb-8">
           <p className="text-slate-500 text-xs uppercase tracking-widest font-semibold mb-1">Workplace</p>
           <h1 className="text-4xl font-bold text-white leading-tight">{company.name}</h1>
@@ -468,7 +465,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </p>
         </div>
 
-        {/* Active Now */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <UserCheck size={16} className="text-emerald-400" />
@@ -498,7 +494,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           }
         </div>
 
-        {/* On Break */}
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Coffee size={16} className="text-amber-400" />

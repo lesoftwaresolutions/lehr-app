@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
@@ -6,11 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ExternalLink, Filter } from "lucide-react";
-import { useLocation } from "wouter";
+import { ExternalLink, Filter, BarChart3 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type LogEntry = {
   id: string;
+  employee_id: string;
   action: string;
   timestamp: string;
   employees: { full_name: string; company_id: string } | null;
@@ -24,23 +25,37 @@ function fmtDateTime(ts: string) {
 }
 
 function actionLabel(a: string) {
-  if (a === "login"     || a === "clock_in")  return "Login";
-  if (a === "logout"    || a === "clock_out") return "Logout";
-  if (a === "break-out" || a === "break_in")  return "Break Out";
-  if (a === "break-in"  || a === "break_out") return "Break In";
+  if (a === "clock_in" || a === "login")  return "Login";
+  if (a === "clock_out" || a === "logout") return "Logout";
+  if (a === "break_start" || a === "break-out")  return "Break Out";
+  if (a === "break_end"  || a === "break-in") return "Break In";
   return a;
 }
 
 const actionColor = (a: string): "default" | "secondary" | "outline" | "destructive" => {
-  if (a === "login"  || a === "clock_in")  return "default";
-  if (a === "logout" || a === "clock_out") return "secondary";
+  if (a === "clock_in" || a === "login")  return "default";
+  if (a === "clock_out" || a === "logout") return "secondary";
   return "outline";
 };
 
+// UK Financial Year Helper (April 6th to April 5th)
+function getFinancialYearRange(date: Date) {
+  const year = date.getFullYear();
+  // If date is before April 6, FY started last year
+  const fyStartYear = (date.getMonth() < 3 || (date.getMonth() === 3 && date.getDate() < 6))
+    ? year - 1
+    : year;
+
+  return {
+    start: new Date(fyStartYear, 3, 6, 0, 0, 0), // April 6
+    end: new Date(fyStartYear + 1, 3, 5, 23, 59, 59) // April 5 next year
+  };
+}
+
 export default function TimePage() {
-  const [, setLocation] = useLocation();
   const { activeCompany } = useCompany();
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [allLogsForStats, setAllLogsForStats] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
 
@@ -49,22 +64,82 @@ export default function TimePage() {
   const fetchLogs = useCallback(async () => {
     if (!companyId) return;
     setIsLoading(true);
-    // Join with employees!inner so we can filter by company_id on the related table
+
+    // Fetch logs for the filtered date
     const { data } = await supabase
       .from("time_logs")
-      .select("id, action, timestamp, employees!inner(full_name, company_id)")
+      .select("id, employee_id, action, timestamp, employees!inner(full_name, company_id)")
+      .eq("company_id", companyId)
       .gte("timestamp", `${dateFilter}T00:00:00`)
       .lte("timestamp", `${dateFilter}T23:59:59`)
       .order("timestamp", { ascending: false });
-    // Client-side filter in case PostgREST doesn't push the join filter
-    const filtered = (data ?? []).filter(
-      (l: any) => l.employees?.company_id === companyId
-    );
-    setLogs(filtered as unknown as LogEntry[]);
+
+    setLogs(data as unknown as LogEntry[]);
     setIsLoading(false);
+
+    // Fetch more logs for summary stats
+    const { data: statsData } = await supabase
+      .from("time_logs")
+      .select("id, employee_id, action, timestamp, employees!inner(full_name, company_id)")
+      .eq("company_id", companyId)
+      .order("timestamp", { ascending: true });
+
+    setAllLogsForStats(statsData as unknown as LogEntry[]);
   }, [dateFilter, companyId]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  // Aggregate stats
+  const stats = useMemo(() => {
+    const report: Record<string, { name: string; day: number; week: number; month: number; fy: number }> = {};
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+
+    const startOfWeek = new Date(now);
+    // Adjust to Monday start
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0,0,0,0);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const fyRange = getFinancialYearRange(now);
+
+    const isLoginAct  = (a: string) => a === "clock_in" || a === "login";
+    const isLogoutAct = (a: string) => a === "clock_out" || a === "logout";
+    const isBreakStart = (a: string) => a === "break_start" || a === "break-out";
+    const isBreakEnd  = (a: string) => a === "break_end" || a === "break-in";
+
+    const byEmp: Record<string, { name: string; events: { action: string; ts: number }[] }> = {};
+    allLogsForStats.forEach(l => {
+      if (!byEmp[l.employee_id]) byEmp[l.employee_id] = { name: l.employees?.full_name ?? "Unknown", events: [] };
+      byEmp[l.employee_id].events.push({ action: l.action, ts: new Date(l.timestamp).getTime() });
+    });
+
+    Object.entries(byEmp).forEach(([id, data]) => {
+      let lastIn: number | null = null;
+      report[id] = { name: data.name, day: 0, week: 0, month: 0, fy: 0 };
+
+      data.events.forEach(e => {
+        if (isLoginAct(e.action) || isBreakEnd(e.action)) {
+          lastIn = e.ts;
+        } else if ((isLogoutAct(e.action) || isBreakStart(e.action)) && lastIn) {
+          const duration = e.ts - lastIn;
+          const edate = new Date(e.ts);
+          const edateStr = edate.toISOString().split('T')[0];
+
+          if (edateStr === todayStr) report[id].day += duration;
+          if (edate >= startOfWeek) report[id].week += duration;
+          if (edate >= startOfMonth) report[id].month += duration;
+          if (edate >= fyRange.start && edate <= fyRange.end) report[id].fy += duration;
+
+          lastIn = null;
+        }
+      });
+    });
+
+    return Object.values(report);
+  }, [allLogsForStats]);
 
   const openKiosk = () => {
     if (!activeCompany) return;
@@ -72,79 +147,106 @@ export default function TimePage() {
     window.open(`${base}/clock/${activeCompany.id}`, "_blank", "noopener");
   };
 
+  const msToHrs = (ms: number) => (ms / 3600000).toFixed(1);
+
   return (
-    <DashboardLayout title="Time Logs">
-      {/* Header row */}
-      <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center mb-6">
-        <div className="flex items-center gap-3">
-          <Filter size={16} className="text-slate-400" />
-          <Input
-            type="date"
-            value={dateFilter}
-            onChange={e => setDateFilter(e.target.value)}
-            className="w-44"
-            data-testid="input-date-filter"
-          />
-          <span className="text-sm text-slate-500">{logs.length} record{logs.length !== 1 ? "s" : ""}</span>
-        </div>
+    <DashboardLayout title="Time Logs & Reports">
+      <div className="grid grid-cols-1 gap-8">
 
-        <Button
-          variant="outline"
-          className="gap-2 border-primary/30 text-primary hover:bg-primary/5"
-          onClick={openKiosk}
-          data-testid="button-open-kiosk"
-        >
-          <ExternalLink size={15} />
-          Open Kiosk View
-        </Button>
-      </div>
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="flex flex-row items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg font-semibold">Staff Hours Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Employee</TableHead>
+                    <TableHead className="text-right">Today</TableHead>
+                    <TableHead className="text-right">This Week</TableHead>
+                    <TableHead className="text-right">This Month</TableHead>
+                    <TableHead className="text-right font-bold text-primary">Financial Year (UK)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stats.length === 0 ? (
+                    <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-400">No data available for reports.</TableCell></TableRow>
+                  ) : stats.map(s => (
+                    <TableRow key={s.name}>
+                      <TableCell className="font-medium">{s.name}</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.day)}h</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.week)}h</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.month)}h</TableCell>
+                      <TableCell className="text-right font-bold text-primary">{msToHrs(s.fy)}h</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-4 italic">
+              * UK Financial Year runs from April 6th to April 5th.
+            </p>
+          </CardContent>
+        </Card>
 
-      {/* Info banner */}
-      <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3 mb-6 flex items-start gap-3">
-        <div className="mt-0.5 text-blue-500">
-          <ExternalLink size={15} />
-        </div>
         <div>
-          <p className="text-sm font-medium text-blue-800">Store Kiosk</p>
-          <p className="text-xs text-blue-600 mt-0.5">
-            The clock in/out kiosk is a separate full-screen page designed to stay open on a device in your store.
-            Staff enter their 4-digit PIN to clock in or out — no manager login needed.
-          </p>
-        </div>
-      </div>
+          <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center mb-4">
+            <div className="flex items-center gap-3">
+              <Filter size={16} className="text-slate-400" />
+              <Input
+                type="date"
+                value={dateFilter}
+                onChange={e => setDateFilter(e.target.value)}
+                className="w-44"
+              />
+              <span className="text-sm text-slate-500">{logs.length} record{logs.length !== 1 ? "s" : ""}</span>
+            </div>
 
-      {/* Log table */}
-      <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Employee</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Date &amp; Time</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={3} className="text-center py-10">Loading...</TableCell></TableRow>
-            ) : logs.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center py-10 text-slate-400">
-                  No activity recorded for this date.
-                </TableCell>
-              </TableRow>
-            ) : (
-              logs.map(log => (
-                <TableRow key={log.id} data-testid={`row-log-${log.id}`}>
-                  <TableCell className="font-medium">{log.employees?.full_name ?? "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant={actionColor(log.action)}>{actionLabel(log.action)}</Badge>
-                  </TableCell>
-                  <TableCell className="text-slate-600">{fmtDateTime(log.timestamp)}</TableCell>
+            <Button
+              variant="outline"
+              className="gap-2 border-primary/30 text-primary hover:bg-primary/5"
+              onClick={openKiosk}
+            >
+              <ExternalLink size={15} />
+              Open Kiosk View
+            </Button>
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Date &amp; Time</TableHead>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow><TableCell colSpan={3} className="text-center py-10">Loading...</TableCell></TableRow>
+                ) : logs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center py-10 text-slate-400">
+                      No activity recorded for this date.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  logs.map(log => (
+                    <TableRow key={log.id}>
+                      <TableCell className="font-medium">{log.employees?.full_name ?? "—"}</TableCell>
+                      <TableCell>
+                        <Badge variant={actionColor(log.action)}>{actionLabel(log.action)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-slate-600">{fmtDateTime(log.timestamp)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );

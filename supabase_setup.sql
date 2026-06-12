@@ -1,5 +1,5 @@
 -- ============================================================================
--- LEHR FINAL PRODUCTION DATABASE SETUP & SECURITY
+-- LEHR FINAL PRODUCTION DATABASE SETUP & SECURITY (REFINED)
 -- ============================================================================
 
 -- 1. SCHEMA UPDATES
@@ -10,16 +10,36 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS break_allowance_minutes INTEGER D
 -- Ensure employees table has user_id for Auth linking
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
 
--- Ensure shifts and leave_requests have company_id for better RLS
+-- Ensure shifts, leave_requests, and time_logs have company_id for better RLS
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
 
--- Update time_logs action constraint to support the new action names
+-- Update time_logs action constraint to support standardized names
+-- Standard: clock_in, clock_out, break_start, break_end
 ALTER TABLE time_logs DROP CONSTRAINT IF EXISTS time_logs_action_check;
 ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
-  CHECK (action IN ('login', 'logout', 'break-out', 'break-in', 'clock_in', 'clock_out', 'break_in', 'break_out'));
+  CHECK (action IN ('clock_in', 'clock_out', 'break_start', 'break_end'));
 
--- 2. CLEANUP: Remove all old policies to start from a fresh slate
+-- 2. SECURE PIN VERIFICATION RPC
+-- This allows checking a PIN without exposing the pin_code column via SELECT policies.
+CREATE OR REPLACE FUNCTION verify_employee_pin(p_company_id UUID, p_pin_code TEXT)
+RETURNS TABLE (id UUID, full_name TEXT)
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT e.id, e.full_name
+  FROM employees e
+  WHERE e.company_id = p_company_id
+    AND e.pin_code = p_pin_code
+    AND e.status = 'active'
+  LIMIT 1;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 3. CLEANUP: Remove all old policies
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -33,73 +53,97 @@ BEGIN
   END LOOP;
 END $$;
 
--- 3. ENABLE RLS
+-- 4. ENABLE RLS
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shifts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 
--- 4. COMPANIES TABLE POLICIES
--- Kiosk/Public can only read specific company they have the ID for
+-- 5. COMPANIES TABLE POLICIES
+-- Kiosk needs to see its own company name and settings
 CREATE POLICY "Kiosk Company Read"
 ON companies FOR SELECT
 TO anon, authenticated
-USING (true); -- RLS select is fine because they must know the ID (uuid) to query it.
+USING (true);
 
--- Only the owner can manage their own company
 CREATE POLICY "Owner Manage Company"
 ON companies FOR ALL
 TO authenticated
 USING (owner_id = auth.uid())
 WITH CHECK (owner_id = auth.uid());
 
--- 5. EMPLOYEES TABLE POLICIES
--- Admin Manage Employees
+-- 6. EMPLOYEES TABLE POLICIES
+-- Admins manage their own staff
 CREATE POLICY "Admin Manage Employees"
 ON employees FOR ALL
 TO authenticated
 USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
 WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
 
--- Kiosk (public page) needs to look up employees by PIN within the same company context
-CREATE POLICY "Kiosk PIN lookup"
+-- Kiosk: NO general select for anon. PIN verification is done via RPC.
+-- However, we might need a restricted select for the Kiosk to show names in "Active Now"
+-- but ONLY if they have logged in today.
+CREATE POLICY "Kiosk employee name lookup"
 ON employees FOR SELECT
-TO anon, authenticated
-USING (status = 'active');
+TO anon
+USING (
+  EXISTS (
+    SELECT 1 FROM time_logs tl
+    WHERE tl.employee_id = employees.id
+    AND tl.timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz
+  )
+);
 
--- 6. SHIFTS TABLE POLICIES
--- Admin Manage Shifts
+-- 7. SHIFTS TABLE POLICIES
 CREATE POLICY "Admin Manage Shifts"
 ON shifts FOR ALL
 TO authenticated
 USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
 WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
 
--- 7. TIME LOGS TABLE POLICIES
--- Admin Manage Time Logs
+-- 8. TIME LOGS TABLE POLICIES
 CREATE POLICY "Admin Manage Time Logs"
 ON time_logs FOR ALL
 TO authenticated
-USING (employee_id IN (SELECT id FROM employees WHERE company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid())))
-WITH CHECK (employee_id IN (SELECT id FROM employees WHERE company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid())));
+USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
+WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
 
--- Kiosk inserts clock-in/out
+-- Kiosk inserts: Validate that the employee belongs to the company
 CREATE POLICY "Kiosk insert"
 ON time_logs FOR INSERT
 TO anon, authenticated
-WITH CHECK (true);
+WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM employees e
+    WHERE e.id = time_logs.employee_id
+    AND e.company_id = time_logs.company_id
+    AND e.status = 'active'
+  )
+);
 
--- Kiosk select: ONLY today's logs (privacy)
+-- Kiosk select: ONLY today's logs
 CREATE POLICY "Kiosk select"
 ON time_logs FOR SELECT
 TO anon, authenticated
-USING (timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz);
+USING (
+  timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz
+);
 
--- 8. LEAVE REQUESTS TABLE POLICIES
--- Admin Manage Leave Requests
+-- 9. LEAVE REQUESTS TABLE POLICIES
 CREATE POLICY "Admin Manage Leave Requests"
 ON leave_requests FOR ALL
 TO authenticated
 USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
 WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
+
+-- 10. ENABLE REALTIME
+-- Check if publication exists first, then add tables
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    CREATE PUBLICATION supabase_realtime;
+  END IF;
+END $$;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE time_logs;
