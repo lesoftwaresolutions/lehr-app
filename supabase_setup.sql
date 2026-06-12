@@ -15,8 +15,32 @@ ALTER TABLE shifts ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
 ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE CASCADE;
 
+-- DATA MIGRATION: Populate company_id for existing records
+UPDATE shifts s SET company_id = e.company_id FROM employees e WHERE s.employee_id = e.id AND s.company_id IS NULL;
+UPDATE leave_requests lr SET company_id = e.company_id FROM employees e WHERE lr.employee_id = e.id AND lr.company_id IS NULL;
+UPDATE time_logs tl SET company_id = e.company_id FROM employees e WHERE tl.employee_id = e.id AND tl.company_id IS NULL;
+
+-- DATA MIGRATION: Standardize legacy action names
+UPDATE time_logs SET action = 'clock_in' WHERE action IN ('login', 'clock_in');
+UPDATE time_logs SET action = 'clock_out' WHERE action IN ('logout', 'clock_out');
+UPDATE time_logs SET action = 'break_start' WHERE action IN ('break-out', 'break_in', 'break_start') AND action != 'break_end'; -- Careful with swap
+-- Actually, let's be more precise to avoid confusion during migration
+UPDATE time_logs SET action = 'break_start' WHERE action = 'break-out';
+UPDATE time_logs SET action = 'break_end' WHERE action = 'break-in';
+
 -- Update time_logs action constraint to support standardized names
 -- Standard: clock_in, clock_out, break_start, break_end
+ALTER TABLE time_logs DROP CONSTRAINT IF EXISTS time_logs_action_check;
+ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
+  CHECK (action IN ('clock_in', 'clock_out', 'break_start', 'break_end', 'login', 'logout', 'break-in', 'break-out'));
+  -- We keep legacy in check for a bit or just migrate them all above.
+  -- Better to migrate all and have a clean constraint.
+
+UPDATE time_logs SET action = 'clock_in' WHERE action = 'login';
+UPDATE time_logs SET action = 'clock_out' WHERE action = 'logout';
+UPDATE time_logs SET action = 'break_start' WHERE action = 'break-out';
+UPDATE time_logs SET action = 'break_end' WHERE action = 'break-in';
+
 ALTER TABLE time_logs DROP CONSTRAINT IF EXISTS time_logs_action_check;
 ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
   CHECK (action IN ('clock_in', 'clock_out', 'break_start', 'break_end'));
@@ -146,4 +170,14 @@ BEGIN
   END IF;
 END $$;
 
-ALTER PUBLICATION supabase_realtime ADD TABLE time_logs;
+-- Only add tables if they aren't already part of the publication
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+    AND tablename = 'time_logs'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE time_logs;
+  END IF;
+END $$;
