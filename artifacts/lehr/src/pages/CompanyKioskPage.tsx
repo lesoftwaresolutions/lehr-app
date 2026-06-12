@@ -130,9 +130,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   }, []);
 
   // Load company — public anon key, no session required.
-  // Only flags companyError when the record is genuinely not found (data === null, no error).
-  // Auth / RLS / network errors are silently ignored so the kiosk never shows a false
-  // "invalid company link" just because the admin session hasn't loaded yet.
   useEffect(() => {
     if (!companyId) {
       setCompanyLoading(false);
@@ -148,18 +145,8 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           .eq("id", companyId)
           .maybeSingle();
 
-        if (error) {
-          // Permission / RLS / network error — NOT a "not found".
-          // Don't show "Invalid company link"; leave company null so the spinner shows.
-          // A retry is not needed; employees can still PIN in if RLS allows time_logs inserts.
-          return;
-        }
-
-        if (!data) {
-          // maybeSingle() returned null with no error → company truly doesn't exist.
-          setCompanyError(true);
-          return;
-        }
+        if (error) return;
+        if (!data) { setCompanyError(true); return; }
 
         setCompany({
           id: data.id,
@@ -167,7 +154,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           break_allowance_minutes: data.break_allowance_minutes ?? null,
         });
       } catch {
-        // Network failure — leave loading state; don't error the kiosk.
       } finally {
         setCompanyLoading(false);
       }
@@ -181,10 +167,11 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     const { data } = await supabase
       .from("time_logs")
       .select("employee_id, action, timestamp, employees!inner(full_name, company_id)")
+      .eq("company_id", companyId)
       .gte("timestamp", `${today}T00:00:00`)
       .order("timestamp", { ascending: true });
     if (data) {
-      setRawLogs((data as any[]).filter(l => l.employees?.company_id === companyId));
+      setRawLogs(data as any[]);
     }
   }, [companyId]);
 
@@ -243,15 +230,21 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   };
 
   const handleAction = async (action: KioskAction) => {
-    if (!foundEmp) return;
+    if (!foundEmp || !companyId) return;
     setPhase("processing");
     const now = new Date();
 
     const { error: insertError } = await supabase
       .from("time_logs")
-      .insert([{ employee_id: foundEmp.id, action, timestamp: now.toISOString() }]);
+      .insert([{
+        employee_id: foundEmp.id,
+        company_id: companyId,
+        action,
+        timestamp: now.toISOString()
+      }]);
 
     if (insertError) {
+      console.error("Insert error:", insertError);
       setPhase("fail");
       return;
     }
@@ -286,12 +279,9 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   // ── Derived state ─────────────────────────────────────────────────────────
   const { working, onBreak } = computeStatus(rawLogs, tick);
 
-  // Employee's current status for display
   const empLive = foundEmp ? [...working, ...onBreak].find(e => e.id === foundEmp.id) : null;
   const empOnBreak = foundEmp ? onBreak.some(e => e.id === foundEmp.id) : false;
 
-  // ── Loading / error screens ───────────────────────────────────────────────
-  // Spinner first — never flash the error screen before the fetch is done.
   if (companyLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -300,7 +290,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     );
   }
 
-  // Only reached after fetch is complete and company is confirmed not found.
   if (companyError || !company) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-center p-8">
@@ -315,11 +304,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
   return (
     <div className="min-h-screen bg-slate-900 flex select-none overflow-hidden">
-
-      {/* ═══════════ LEFT PANEL — PIN + Actions ═══════════ */}
       <div className="flex flex-col items-center justify-center w-full md:w-[45%] p-6 md:p-10 border-r border-slate-800">
-
-        {/* Logo + live clock */}
         <div className="text-center mb-8 w-full">
           <div className="flex items-center justify-center gap-3 mb-5">
             <img src="/logo.jpeg" alt="LEHR" className="h-8 object-contain rounded" />
@@ -333,7 +318,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </p>
         </div>
 
-        {/* ─── SUCCESS screen ─── */}
         {phase === "success" && (
           <div className="w-full max-w-sm text-center bg-slate-800 rounded-2xl border border-slate-700 p-8">
             <CheckCircle size={52} className="text-emerald-400 mx-auto mb-4" />
@@ -344,7 +328,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </div>
         )}
 
-        {/* ─── FAIL screen ─── */}
         {phase === "fail" && (
           <div className="w-full max-w-sm text-center bg-rose-900/30 rounded-2xl border border-rose-700/50 p-8">
             <XCircle size={52} className="text-rose-400 mx-auto mb-4" />
@@ -359,11 +342,8 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </div>
         )}
 
-        {/* ─── PIN + button area ─── */}
         {phase !== "success" && phase !== "fail" && (
           <div className="w-full max-w-sm">
-
-            {/* Employee greeting card (shown in "action" + "processing" phase) */}
             {(phase === "action" || phase === "processing") && foundEmp && (
               <div className="mb-6 bg-slate-800 rounded-xl p-4 text-center border border-slate-700">
                 <p className="text-white font-bold text-xl">{foundEmp.full_name}</p>
@@ -379,7 +359,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </div>
             )}
 
-            {/* PIN dots — shown only in idle / lookup */}
             {(phase === "idle" || phase === "lookup") && (
               <>
                 <div className="flex gap-3 justify-center mb-5">
@@ -403,7 +382,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </>
             )}
 
-            {/* ── 4 large action buttons — shown only after PIN verified ── */}
             {phase === "action" && (
               <>
                 <div className="grid grid-cols-2 gap-3 mb-4">
@@ -426,14 +404,12 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
               </>
             )}
 
-            {/* Processing spinner */}
             {phase === "processing" && (
               <div className="flex justify-center py-8">
                 <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               </div>
             )}
 
-            {/* Numpad — shown in idle / lookup */}
             {(phase === "idle" || phase === "lookup") && (
               <div className="grid grid-cols-3 gap-3">
                 {["1","2","3","4","5","6","7","8","9","clear","0","⌫"].map(key => (
@@ -456,10 +432,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
         )}
       </div>
 
-      {/* ═══════════ RIGHT PANEL — Company Status ═══════════ */}
       <div className="hidden md:flex flex-col w-[55%] p-10 overflow-y-auto">
-
-        {/* Company name */}
         <div className="mb-8">
           <p className="text-slate-500 text-xs uppercase tracking-widest font-semibold mb-1">Workplace</p>
           <h1 className="text-4xl font-bold text-white leading-tight">{company.name}</h1>
@@ -468,7 +441,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           </p>
         </div>
 
-        {/* Active Now */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <UserCheck size={16} className="text-emerald-400" />
@@ -498,7 +470,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
           }
         </div>
 
-        {/* On Break */}
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Coffee size={16} className="text-amber-400" />

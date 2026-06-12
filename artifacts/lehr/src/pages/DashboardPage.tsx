@@ -8,12 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
-type ActionType = "clock_in" | "clock_out" | "break_in" | "break_out";
-
 interface BreakEntry { id: string; name: string; breakMs: number; workMs: number; }
 
-// Normalise action names — supports both old (clock_in/out/break_in/break_out)
-// and new (login/logout/break-out/break-in) kiosk action values.
+// Helper for elapsed time (HHh MMm)
+function fmtElapsedShort(ms: number) {
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return `${h > 0 ? h + 'h ' : ''}${m}m`;
+}
+
 function isLoginAct (a: string) { return a === "login"     || a === "clock_in"; }
 function isLogoutAct(a: string) { return a === "logout"    || a === "clock_out"; }
 function isBreakStart(a: string){ return a === "break-out" || a === "break_in"; }
@@ -21,7 +24,7 @@ function isBreakEnd  (a: string){ return a === "break-in"  || a === "break_out";
 function isClockedIn (a: string){ return isLoginAct(a) || isBreakEnd(a); }
 function isOnBreakAct(a: string){ return isBreakStart(a); }
 
-function computeLiveStatus(logs: { employee_id: string; action: string; timestamp: string }[]) {
+function computeLiveStatus(logs: { employee_id: string; action: string; timestamp: string }[], tick: number) {
   const byEmp: Record<string, { events: { action: string; ts: number }[] }> = {};
   logs.forEach(l => {
     if (!byEmp[l.employee_id]) byEmp[l.employee_id] = { events: [] };
@@ -30,21 +33,36 @@ function computeLiveStatus(logs: { employee_id: string; action: string; timestam
 
   const lastActions: Record<string, string> = {};
   const breakMsMap: Record<string, number> = {};
+  const workMsMap: Record<string, number> = {};
 
   Object.entries(byEmp).forEach(([id, { events }]) => {
-    let breakMs = 0, lastBreak: number | null = null;
+    let workMs = 0, breakMs = 0;
+    let lastWork: number | null = null, lastBreak: number | null = null;
+
     events.forEach(({ action, ts }) => {
-      if (isBreakStart(action)) lastBreak = ts;
-      if ((isBreakEnd(action) || isLogoutAct(action)) && lastBreak !== null) {
-        breakMs += ts - lastBreak; lastBreak = null;
+      if (isLoginAct(action) || isBreakEnd(action)) {
+        if (lastBreak !== null) { breakMs += ts - lastBreak; lastBreak = null; }
+        lastWork = ts;
+      }
+      if (isBreakStart(action)) {
+        if (lastWork !== null) { workMs += ts - lastWork; lastWork = null; }
+        lastBreak = ts;
+      }
+      if (isLogoutAct(action)) {
+        if (lastWork !== null) { workMs += ts - lastWork; lastWork = null; }
+        if (lastBreak !== null) { breakMs += ts - lastBreak; lastBreak = null; }
       }
     });
-    if (lastBreak !== null) breakMs += Date.now() - lastBreak;
+
+    if (lastWork !== null)  workMs  += tick - lastWork;
+    if (lastBreak !== null) breakMs += tick - lastBreak;
+
     lastActions[id] = events[events.length - 1]?.action ?? "";
     breakMsMap[id] = breakMs;
+    workMsMap[id] = workMs;
   });
 
-  return { lastActions, breakMsMap };
+  return { lastActions, breakMsMap, workMsMap };
 }
 
 export default function DashboardPage() {
@@ -56,6 +74,10 @@ export default function DashboardPage() {
   const [savingBreak, setSavingBreak] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
   const [onBreakStaff, setOnBreakStaff] = React.useState<BreakEntry[]>([]);
+  const [activeStaff, setActiveStaff] = React.useState<BreakEntry[]>([]);
+  const [rawLogs, setRawLogs] = React.useState<any[]>([]);
+  const [staffList, setStaffList] = React.useState<any[]>([]);
+  const [tick, setTick] = React.useState(Date.now());
 
   const kioskUrl = React.useMemo(() => {
     if (!activeCompany) return "";
@@ -63,49 +85,70 @@ export default function DashboardPage() {
     return `${base}/clock/${activeCompany.id}`;
   }, [activeCompany]);
 
+  // Tick for timers
   React.useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 10000); // update every 10s
+    return () => clearInterval(t);
+  }, []);
+
+  const fetchAll = React.useCallback(async () => {
     if (!activeCompany) return;
     const companyId = activeCompany.id;
+    const today = new Date().toISOString().split("T")[0];
 
-    async function fetchAll() {
-      const today = new Date().toISOString().split("T")[0];
+    const [staffRes, shiftsRes, leaveRes, clockRes, companyRes] = await Promise.all([
+      supabase.from("employees").select("*").eq("company_id", companyId).eq("status", "active"),
+      supabase.from("shifts").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("date", today),
+      supabase.from("leave_requests").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "pending"),
+      supabase.from("time_logs").select("employee_id, action, timestamp").eq("company_id", companyId).gte("timestamp", `${today}T00:00:00`).order("timestamp", { ascending: true }),
+      supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
+    ]);
 
-      const [staffRes, shiftsRes, leaveRes, clockRes, companyRes] = await Promise.all([
-        supabase.from("employees").select("id", { count: "exact", head: false }).eq("company_id", companyId).eq("status", "active"),
-        supabase.from("shifts").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("date", today),
-        supabase.from("leave_requests").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "pending"),
-        supabase.from("time_logs").select("employee_id, action, timestamp").gte("timestamp", `${today}T00:00:00`).order("timestamp", { ascending: true }),
-        supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
-      ]);
-
-      const allowance = (companyRes.data as any)?.break_allowance_minutes ?? 30;
-      setBreakAllowance(allowance);
-      setBreakAllowanceInput(String(allowance));
-
-      // Filter logs to this company's employees
-      const empIds = new Set((staffRes.data ?? []).map((e: any) => e.id));
-      const logs = (clockRes.data ?? []).filter(l => empIds.has(l.employee_id));
-
-      const { lastActions, breakMsMap } = computeLiveStatus(logs);
-
-      const clockedIn = Object.values(lastActions).filter(isClockedIn).length;
-      const onBreakCount = Object.values(lastActions).filter(isOnBreakAct).length;
-
-      // Build on-break staff details
-      const empList = staffRes.data ?? [];
-      const breakStaff: BreakEntry[] = Object.entries(lastActions)
-        .filter(([, a]) => isOnBreakAct(a))
-        .map(([id]) => {
-          const emp = (empList as any[]).find(e => e.id === id);
-          return { id, name: emp?.full_name ?? id, breakMs: breakMsMap[id] ?? 0, workMs: 0 };
-        });
-
-      setOnBreakStaff(breakStaff);
-      setStats({ staff: staffRes.count || 0, shifts: shiftsRes.count || 0, clockedIn, leave: leaveRes.count || 0, onBreak: onBreakCount });
-    }
-
-    fetchAll();
+    const allowance = (companyRes.data as any)?.break_allowance_minutes ?? 30;
+    setBreakAllowance(allowance);
+    setBreakAllowanceInput(String(allowance));
+    setStaffList(staffRes.data ?? []);
+    setRawLogs(clockRes.data ?? []);
+    setStats(s => ({ ...s, staff: staffRes.data?.length || 0, shifts: shiftsRes.count || 0, leave: leaveRes.count || 0 }));
   }, [activeCompany]);
+
+  React.useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // REALTIME SUBSCRIPTION
+  React.useEffect(() => {
+    if (!activeCompany) return;
+    const channel = supabase.channel('dashboard-realtime')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'time_logs',
+        filter: `company_id=eq.${activeCompany.id}`
+      }, () => {
+        fetchAll(); // Refresh on new log
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [activeCompany, fetchAll]);
+
+  // Compute status on logs/tick change
+  React.useEffect(() => {
+    const { lastActions, breakMsMap, workMsMap } = computeLiveStatus(rawLogs, tick);
+
+    const breakStaff: BreakEntry[] = [];
+    const workingStaff: BreakEntry[] = [];
+
+    Object.entries(lastActions).forEach(([id, action]) => {
+      const emp = staffList.find(e => e.id === id);
+      const entry = { id, name: emp?.full_name ?? id, breakMs: breakMsMap[id] || 0, workMs: workMsMap[id] || 0 };
+
+      if (isOnBreakAct(action)) breakStaff.push(entry);
+      else if (isClockedIn(action)) workingStaff.push(entry);
+    });
+
+    setOnBreakStaff(breakStaff);
+    setActiveStaff(workingStaff);
+    setStats(s => ({ ...s, clockedIn: workingStaff.length, onBreak: breakStaff.length }));
+  }, [rawLogs, staffList, tick]);
 
   const copyKioskUrl = () => {
     navigator.clipboard.writeText(kioskUrl).then(() => {
@@ -126,7 +169,7 @@ export default function DashboardPage() {
     const { error } = await supabase.from("companies").update({ break_allowance_minutes: mins }).eq("id", activeCompany.id);
     setSavingBreak(false);
     if (error) {
-      toast({ title: "Could not save", description: "Run the required SQL migration first (see below).", variant: "destructive" });
+      toast({ title: "Could not save", description: error.message, variant: "destructive" });
     } else {
       setBreakAllowance(mins);
       toast({ title: "Break allowance saved", description: `Set to ${mins} minutes.` });
@@ -140,7 +183,6 @@ export default function DashboardPage() {
         <p className="text-slate-600">Here's what's happening in your business today.</p>
       </div>
 
-      {/* ── Stats ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
@@ -187,17 +229,13 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* ── Kiosk + Break settings row ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-
-        {/* Kiosk URL */}
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <Link2 className="h-4 w-4 text-primary" />
               <CardTitle className="text-base font-semibold text-slate-900">Staff Kiosk Link</CardTitle>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Share this URL with your staff. They open it on any device to clock in and out.</p>
           </CardHeader>
           <CardContent>
             <div className="flex gap-2">
@@ -205,57 +243,63 @@ export default function DashboardPage() {
                 readOnly
                 value={kioskUrl}
                 className="text-xs text-slate-600 bg-slate-50 font-mono"
-                onClick={e => (e.target as HTMLInputElement).select()}
               />
-              <Button variant="outline" size="icon" onClick={copyKioskUrl} className="shrink-0" title="Copy link">
+              <Button variant="outline" size="icon" onClick={copyKioskUrl}>
                 {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
-            <p className="text-[11px] text-slate-400 mt-2">
-              This link is unique to your company — only your staff's PINs will work here.
-            </p>
           </CardContent>
         </Card>
 
-        {/* Break Allowance */}
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <Coffee className="h-4 w-4 text-amber-500" />
               <CardTitle className="text-base font-semibold text-slate-900">Break Allowance</CardTitle>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Maximum break time per shift. Staff exceeding this will be highlighted on the kiosk.</p>
           </CardHeader>
           <CardContent>
             <div className="flex gap-2 items-center">
               <Input
                 type="number"
-                min={1}
-                max={480}
                 value={breakAllowanceInput}
                 onChange={e => setBreakAllowanceInput(e.target.value)}
                 className="w-28"
-                placeholder="30"
               />
               <span className="text-slate-500 text-sm">minutes</span>
-              <Button
-                size="sm"
-                className="ml-auto"
-                onClick={saveBreakAllowance}
-                disabled={savingBreak || breakAllowanceInput === String(breakAllowance)}
-              >
+              <Button size="sm" className="ml-auto" onClick={saveBreakAllowance} disabled={savingBreak}>
                 {savingBreak ? "Saving…" : "Save"}
               </Button>
             </div>
-            <p className="text-[11px] text-slate-400 mt-2">
-              Current: <strong>{breakAllowance} mins</strong>. Requires the break_allowance_minutes column in the companies table.
-            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* ── On Break Monitor ── */}
-      {onBreakStaff.length > 0 && (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Active Now Monitor */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-emerald-500" />
+              <CardTitle className="text-base font-semibold text-slate-900">Active Now</CardTitle>
+              <span className="ml-auto text-xs bg-emerald-100 text-emerald-700 font-semibold px-2 py-0.5 rounded-full">{activeStaff.length}</span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y divide-slate-100">
+              {activeStaff.length === 0 ? <p className="text-sm text-slate-400 py-2">No one working currently.</p> : activeStaff.map(e => (
+                <div key={e.id} className="flex items-center justify-between py-2.5">
+                  <span className="text-sm font-medium text-slate-800">{e.name}</span>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-emerald-600">{fmtElapsedShort(e.workMs)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* On Break Monitor */}
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
@@ -266,22 +310,19 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="divide-y divide-slate-100">
-              {onBreakStaff.map(e => {
+              {onBreakStaff.length === 0 ? <p className="text-sm text-slate-400 py-2">No one on break currently.</p> : onBreakStaff.map(e => {
                 const mins = Math.round(e.breakMs / 60_000);
                 const over = mins > breakAllowance;
                 return (
-                  <div key={e.id} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
+                  <div key={e.id} className="flex items-center justify-between py-2.5">
                     <div className="flex items-center gap-2.5">
-                      {over
-                        ? <AlertTriangle size={15} className="text-rose-500 shrink-0" />
-                        : <Coffee size={15} className="text-amber-400 shrink-0" />
-                      }
+                      {over ? <AlertTriangle size={15} className="text-rose-500 shrink-0" /> : <Coffee size={15} className="text-amber-400 shrink-0" />}
                       <span className="text-sm font-medium text-slate-800">{e.name}</span>
                     </div>
                     <div className="text-right">
                       <span className={`text-sm font-bold ${over ? "text-rose-600" : "text-amber-600"}`}>{mins}m</span>
                       <span className="text-slate-400 text-xs ml-1">/ {breakAllowance}m</span>
-                      {over && <span className="ml-2 text-[11px] text-rose-500 font-semibold">OVER LIMIT</span>}
+                      {over && <div className="text-[10px] text-rose-500 font-bold uppercase">{mins - breakAllowance}m over limit</div>}
                     </div>
                   </div>
                 );
@@ -289,7 +330,7 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      </div>
     </DashboardLayout>
   );
 }
