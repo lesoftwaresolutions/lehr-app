@@ -25,24 +25,30 @@ function fmtDateTime(ts: string) {
 }
 
 function actionLabel(a: string) {
-  if (a === "login"     || a === "clock_in")  return "Login";
-  if (a === "logout"    || a === "clock_out") return "Logout";
-  if (a === "break-out" || a === "break_in")  return "Break Out";
-  if (a === "break-in"  || a === "break_out") return "Break In";
+  if (a === "clock_in" || a === "login")  return "Login";
+  if (a === "clock_out" || a === "logout") return "Logout";
+  if (a === "break_start" || a === "break-out")  return "Break Out";
+  if (a === "break_end"  || a === "break-in") return "Break In";
   return a;
 }
 
 const actionColor = (a: string): "default" | "secondary" | "outline" | "destructive" => {
-  if (a === "login"  || a === "clock_in")  return "default";
-  if (a === "logout" || a === "clock_out") return "secondary";
+  if (a === "clock_in" || a === "login")  return "default";
+  if (a === "clock_out" || a === "logout") return "secondary";
   return "outline";
 };
 
 // UK Financial Year Helper (April 6th to April 5th)
-function getFinancialYearRange(year: number) {
+function getFinancialYearRange(date: Date) {
+  const year = date.getFullYear();
+  // If date is before April 6, FY started last year
+  const fyStartYear = (date.getMonth() < 3 || (date.getMonth() === 3 && date.getDate() < 6))
+    ? year - 1
+    : year;
+
   return {
-    start: new Date(year, 3, 6), // April 6
-    end: new Date(year + 1, 3, 5, 23, 59, 59) // April 5 next year
+    start: new Date(fyStartYear, 3, 6, 0, 0, 0), // April 6
+    end: new Date(fyStartYear + 1, 3, 5, 23, 59, 59) // April 5 next year
   };
 }
 
@@ -90,20 +96,19 @@ export default function TimePage() {
     const todayStr = now.toISOString().split('T')[0];
 
     const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
+    // Adjust to Monday start
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
     startOfWeek.setHours(0,0,0,0);
 
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const fyRange = getFinancialYearRange(now);
 
-    const currentFY = now.getMonth() < 3 || (now.getMonth() === 3 && now.getDate() < 6)
-      ? now.getFullYear() - 1
-      : now.getFullYear();
-    const fyRange = getFinancialYearRange(currentFY);
-
-    const isLoginAct  = (a: string) => a === "login"     || a === "clock_in";
-    const isLogoutAct = (a: string) => a === "logout"    || a === "clock_out";
-    const isBreakStart = (a: string) => a === "break-out" || a === "break_in";
-    const isBreakEnd  = (a: string) => a === "break-in"  || a === "break_out";
+    const isLoginAct  = (a: string) => a === "clock_in" || a === "login";
+    const isLogoutAct = (a: string) => a === "clock_out" || a === "logout";
+    const isBreakStart = (a: string) => a === "break_start" || a === "break-out";
+    const isBreakEnd  = (a: string) => a === "break_end" || a === "break-in";
 
     const byEmp: Record<string, { name: string; events: { action: string; ts: number }[] }> = {};
     allLogsForStats.forEach(l => {
@@ -154,30 +159,35 @@ export default function TimePage() {
             <CardTitle className="text-lg font-semibold">Staff Hours Summary</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Employee</TableHead>
-                  <TableHead className="text-right">Today</TableHead>
-                  <TableHead className="text-right">This Week</TableHead>
-                  <TableHead className="text-right">This Month</TableHead>
-                  <TableHead className="text-right font-bold text-primary">Financial Year (UK)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stats.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-400">No data available for reports.</TableCell></TableRow>
-                ) : stats.map(s => (
-                  <TableRow key={s.name}>
-                    <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell className="text-right">{msToHrs(s.day)}h</TableCell>
-                    <TableCell className="text-right">{msToHrs(s.week)}h</TableCell>
-                    <TableCell className="text-right">{msToHrs(s.month)}h</TableCell>
-                    <TableCell className="text-right font-bold text-primary">{msToHrs(s.fy)}h</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Employee</TableHead>
+                    <TableHead className="text-right">Today</TableHead>
+                    <TableHead className="text-right">This Week</TableHead>
+                    <TableHead className="text-right">This Month</TableHead>
+                    <TableHead className="text-right font-bold text-primary">Financial Year (UK)</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {stats.length === 0 ? (
+                    <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-400">No data available for reports.</TableCell></TableRow>
+                  ) : stats.map(s => (
+                    <TableRow key={s.name}>
+                      <TableCell className="font-medium">{s.name}</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.day)}h</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.week)}h</TableCell>
+                      <TableCell className="text-right">{msToHrs(s.month)}h</TableCell>
+                      <TableCell className="text-right font-bold text-primary">{msToHrs(s.fy)}h</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-4 italic">
+              * UK Financial Year runs from April 6th to April 5th.
+            </p>
           </CardContent>
         </Card>
 

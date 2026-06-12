@@ -17,10 +17,11 @@ function fmtElapsedShort(ms: number) {
   return `${h > 0 ? h + 'h ' : ''}${m}m`;
 }
 
-function isLoginAct (a: string) { return a === "login"     || a === "clock_in"; }
-function isLogoutAct(a: string) { return a === "logout"    || a === "clock_out"; }
-function isBreakStart(a: string){ return a === "break-out" || a === "break_in"; }
-function isBreakEnd  (a: string){ return a === "break-in"  || a === "break_out"; }
+// Standardized actions
+function isLoginAct (a: string) { return a === "clock_in" || a === "login"; }
+function isLogoutAct(a: string) { return a === "clock_out" || a === "logout"; }
+function isBreakStart(a: string){ return a === "break_start" || a === "break-out"; }
+function isBreakEnd  (a: string){ return a === "break_end" || a === "break-in"; }
 function isClockedIn (a: string){ return isLoginAct(a) || isBreakEnd(a); }
 function isOnBreakAct(a: string){ return isBreakStart(a); }
 
