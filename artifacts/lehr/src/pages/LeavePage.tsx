@@ -70,7 +70,7 @@ export default function LeavePage() {
     const [reqRes, empRes] = await Promise.all([
       supabase
         .from("leave_requests")
-        .select("*, employees(full_name)")
+        .select("*, employees!inner(full_name, company_id)")
         .eq("employees.company_id", activeCompany.id)
         .order("created_at", { ascending: false }),
       supabase.from("employees").select("id, full_name").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),

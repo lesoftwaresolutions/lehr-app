@@ -50,6 +50,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
 
       const isLoginAct  = (a: string) => a === "login"     || a === "clock_in";
       const isLogoutAct = (a: string) => a === "logout"    || a === "clock_out";
+      const isBreakStart = (a: string) => a === "break-out" || a === "break_in";
       const isBreakEnd  = (a: string) => a === "break-in"  || a === "break_out";
 
       const byEmp: Record<string, { action: string; timestamp: string }[]> = {};
@@ -61,18 +62,25 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       let totalMs = 0;
       const clockedInSet = new Set<string>();
 
-      Object.entries(byEmp).forEach(([, events]) => {
+      Object.entries(byEmp).forEach(([empId, events]) => {
         let lastIn: string | null = null;
         let isIn = false;
+        let lastAction = "";
+
         events.forEach(e => {
-          if (isLoginAct(e.action) || isBreakEnd(e.action)) { lastIn = e.timestamp; isIn = true; }
-          if (isLogoutAct(e.action) && lastIn) {
+          lastAction = e.action;
+          if (isLoginAct(e.action) || isBreakEnd(e.action)) {
+            lastIn = e.timestamp;
+            isIn = true;
+          } else if ((isLogoutAct(e.action) || isBreakStart(e.action)) && lastIn) {
             totalMs += new Date(e.timestamp).getTime() - new Date(lastIn).getTime();
-            lastIn = null; isIn = false;
+            lastIn = null;
+            isIn = false;
           }
         });
-        if (isIn) {
-          clockedInSet.add(events[0]?.timestamp ?? ""); // just mark as clocked in
+
+        if (isLoginAct(lastAction) || isBreakEnd(lastAction)) {
+          clockedInSet.add(empId);
           if (lastIn) totalMs += Date.now() - new Date(lastIn).getTime();
         }
       });

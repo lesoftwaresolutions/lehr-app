@@ -59,10 +59,17 @@ export default function StaffPage() {
         }).eq('id', editingStaff.id);
         if (error) throw error;
       } else {
-        // Call the new backend route to create the login account
+        // 🚀 SECURE API CALL
+        const { data: { session } } = await supabase.auth.getSession();
+
+        // In production, the API server would be at a known URL (e.g. api.domain.com or /api subpath)
+        // For this demo/setup, we assume the API is reachable at /api
         const response = await fetch(`${window.location.origin}/api/create-employee`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
           body: JSON.stringify({
             ...formData,
             company_id: activeCompany?.id,
