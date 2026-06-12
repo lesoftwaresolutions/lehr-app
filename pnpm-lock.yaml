@@ -156,6 +156,10 @@ overrides:
 importers:
 
   .:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.106.1
     devDependencies:
       prettier:
         specifier: ^3.8.3
@@ -166,6 +170,9 @@ importers:
 
   artifacts/api-server:
     dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.106.1
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
