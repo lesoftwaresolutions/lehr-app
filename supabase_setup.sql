@@ -63,6 +63,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Grant access to the RPC function
+GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO anon;
+GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO authenticated;
+
 -- 3. CLEANUP: Remove all old policies
 DO $$
 DECLARE r RECORD;

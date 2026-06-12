@@ -180,12 +180,26 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   const fetchLogs = useCallback(async () => {
     if (!companyId) return;
     const today = new Date().toISOString().split("T")[0];
-    const { data } = await supabase
+    const { data, error: fetchError } = await supabase
       .from("time_logs")
-      .select("employee_id, action, timestamp, employees!inner(full_name, company_id)")
+      .select(`
+        employee_id,
+        action,
+        timestamp,
+        employees (
+          full_name,
+          company_id
+        )
+      `)
       .eq("company_id", companyId)
       .gte("timestamp", `${today}T00:00:00`)
       .order("timestamp", { ascending: true });
+
+    if (fetchError) {
+      console.error("Kiosk: Error fetching logs:", fetchError);
+      return;
+    }
+
     if (data) {
       setRawLogs(data as any[]);
     }
