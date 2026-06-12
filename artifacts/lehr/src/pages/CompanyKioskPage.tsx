@@ -118,7 +118,6 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   const [rawLogs, setRawLogs]           = useState<RawLog[]>([]);
   const [tick, setTick]                 = useState(Date.now());
   const [clock, setClock]               = useState(new Date());
-  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const breakAllowance = company?.break_allowance_minutes ?? 30;
@@ -177,10 +176,21 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
+  // Real-time subscription
   useEffect(() => {
-    pollRef.current = setInterval(fetchLogs, 30_000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [fetchLogs]);
+    if (!companyId) return;
+    const channel = supabase.channel('kiosk-realtime')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'time_logs',
+        filter: `company_id=eq.${companyId}`
+      }, () => {
+        fetchLogs();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [companyId, fetchLogs]);
 
   // ── PIN handlers ─────────────────────────────────────────────────────────
   const resetToIdle = () => {
@@ -244,7 +254,13 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
       }]);
 
     if (insertError) {
-      console.error("Insert error:", insertError);
+      console.error("Kiosk: Error inserting time log:", {
+        error: insertError,
+        details: insertError.details,
+        hint: insertError.hint,
+        message: insertError.message,
+        payload: { employee_id: foundEmp.id, company_id: companyId, action }
+      });
       setPhase("fail");
       return;
     }
@@ -272,7 +288,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
       ""
     );
     setPhase("success");
-    fetchLogs();
+    // No need to call fetchLogs() here, Realtime will catch it
     scheduleReset(3000); // 3-second auto-reset
   };
 

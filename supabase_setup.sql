@@ -18,7 +18,7 @@ ALTER TABLE time_logs ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES compan
 -- Update time_logs action constraint to support the new action names
 ALTER TABLE time_logs DROP CONSTRAINT IF EXISTS time_logs_action_check;
 ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
-  CHECK (action IN ('login', 'logout', 'break-out', 'break-in', 'clock_in', 'clock_out', 'break_in', 'break_out'));
+  CHECK (action IN ('login', 'logout', 'break-out', 'break-in', 'clock_in', 'clock_out', 'break_in', 'break_out', 'break_start', 'break_end'));
 
 -- 2. CLEANUP: Remove all old policies to start from a fresh slate
 DO $$
@@ -80,23 +80,26 @@ USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
 WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
 
 -- Kiosk inserts: Validate that the employee belongs to the company
+-- Using explicit table aliases to ensure no ambiguity in RLS
 CREATE POLICY "Kiosk insert"
 ON time_logs FOR INSERT
 TO anon, authenticated
 WITH CHECK (
   EXISTS (
-    SELECT 1 FROM employees
-    WHERE employees.id = employee_id
-    AND employees.company_id = time_logs.company_id
-    AND employees.status = 'active'
+    SELECT 1 FROM employees e
+    WHERE e.id = time_logs.employee_id
+    AND e.company_id = time_logs.company_id
+    AND e.status = 'active'
   )
 );
 
--- Kiosk select: ONLY today's logs for the same company (privacy)
+-- Kiosk select: ONLY today's logs for active staff
 CREATE POLICY "Kiosk select"
 ON time_logs FOR SELECT
 TO anon, authenticated
-USING (timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz);
+USING (
+  timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz
+);
 
 -- 8. LEAVE REQUESTS TABLE POLICIES
 CREATE POLICY "Admin Manage Leave Requests"
