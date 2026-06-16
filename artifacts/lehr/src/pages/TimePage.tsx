@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ExternalLink, Filter, BarChart3 } from "lucide-react";
+import { ExternalLink, Filter, BarChart3, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type LogEntry = {
@@ -38,6 +38,13 @@ const actionColor = (a: string): "default" | "secondary" | "outline" | "destruct
   return "outline";
 };
 
+function msToHHMM(ms: number) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 // UK Financial Year Helper (April 6th to April 5th)
 function getFinancialYearRange(date: Date) {
   const year = date.getFullYear();
@@ -56,6 +63,7 @@ export default function TimePage() {
   const { activeCompany } = useCompany();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [allLogsForStats, setAllLogsForStats] = useState<LogEntry[]>([]);
+  const [allShiftsForStats, setAllShiftsForStats] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
 
@@ -85,6 +93,14 @@ export default function TimePage() {
       .order("timestamp", { ascending: true });
 
     setAllLogsForStats(statsData as unknown as LogEntry[]);
+
+    // Fetch shifts for rota comparison
+    const { data: shiftData } = await supabase
+      .from("shifts")
+      .select("employee_id, date, start_time, end_time, employees!inner(full_name)")
+      .eq("company_id", companyId);
+
+    setAllShiftsForStats(shiftData ?? []);
   }, [dateFilter, companyId]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
@@ -141,13 +157,68 @@ export default function TimePage() {
     return Object.values(report);
   }, [allLogsForStats]);
 
+  // Comparison stats: Rota vs Actual
+  const comparisonStats = useMemo(() => {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const report: Record<string, Record<string, { name: string; rotaMs: number; actualMs: number }>> = {};
+
+    const isLoginAct  = (a: string) => a === "clock_in" || a === "login";
+    const isLogoutAct = (a: string) => a === "clock_out" || a === "logout";
+    const isBreakStart = (a: string) => a === "break_start" || a === "break-out";
+    const isBreakEnd  = (a: string) => a === "break_end" || a === "break-in";
+
+    // Initialize report structure
+    const now = new Date();
+    const currentYear = now.getFullYear();
+
+    // Process Rota (Shifts)
+    allShiftsForStats.forEach(s => {
+      const date = new Date(s.date);
+      if (date.getFullYear() !== currentYear) return;
+      const monthKey = months[date.getMonth()];
+
+      if (!report[monthKey]) report[monthKey] = {};
+      if (!report[monthKey][s.employee_id]) report[monthKey][s.employee_id] = { name: s.employees?.full_name ?? "Unknown", rotaMs: 0, actualMs: 0 };
+
+      const start = new Date(`${s.date}T${s.start_time}`);
+      const end = new Date(`${s.date}T${s.end_time}`);
+      report[monthKey][s.employee_id].rotaMs += end.getTime() - start.getTime();
+    });
+
+    // Process Actual (Logs)
+    const byEmpActual: Record<string, { name: string; events: { action: string; ts: number }[] }> = {};
+    allLogsForStats.forEach(l => {
+      if (!byEmpActual[l.employee_id]) byEmpActual[l.employee_id] = { name: l.employees?.full_name ?? "Unknown", events: [] };
+      byEmpActual[l.employee_id].events.push({ action: l.action, ts: new Date(l.timestamp).getTime() });
+    });
+
+    Object.entries(byEmpActual).forEach(([id, data]) => {
+      let lastIn: number | null = null;
+      data.events.forEach(e => {
+        if (isLoginAct(e.action) || isBreakEnd(e.action)) {
+          lastIn = e.ts;
+        } else if ((isLogoutAct(e.action) || isBreakStart(e.action)) && lastIn) {
+          const duration = e.ts - lastIn;
+          const edate = new Date(e.ts);
+          if (edate.getFullYear() === currentYear) {
+            const monthKey = months[edate.getMonth()];
+            if (!report[monthKey]) report[monthKey] = {};
+            if (!report[monthKey][id]) report[monthKey][id] = { name: data.name, rotaMs: 0, actualMs: 0 };
+            report[monthKey][id].actualMs += duration;
+          }
+          lastIn = null;
+        }
+      });
+    });
+
+    return report;
+  }, [allLogsForStats, allShiftsForStats]);
+
   const openKiosk = () => {
     if (!activeCompany) return;
     const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
     window.open(`${base}/clock/${activeCompany.id}`, "_blank", "noopener");
   };
-
-  const msToHrs = (ms: number) => (ms / 3600000).toFixed(1);
 
   return (
     <DashboardLayout title="Time Logs & Reports">
@@ -173,21 +244,93 @@ export default function TimePage() {
                 <TableBody>
                   {stats.length === 0 ? (
                     <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-400">No data available for reports.</TableCell></TableRow>
-                  ) : stats.map(s => (
-                    <TableRow key={s.name}>
-                      <TableCell className="font-medium">{s.name}</TableCell>
-                      <TableCell className="text-right">{msToHrs(s.day)}h</TableCell>
-                      <TableCell className="text-right">{msToHrs(s.week)}h</TableCell>
-                      <TableCell className="text-right">{msToHrs(s.month)}h</TableCell>
-                      <TableCell className="text-right font-bold text-primary">{msToHrs(s.fy)}h</TableCell>
-                    </TableRow>
-                  ))}
+                  ) : (
+                    <>
+                      {stats.map(s => (
+                        <TableRow key={s.name}>
+                          <TableCell className="font-medium">{s.name}</TableCell>
+                          <TableCell className="text-right tabular-nums">{msToHHMM(s.day)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{msToHHMM(s.week)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{msToHHMM(s.month)}</TableCell>
+                          <TableCell className="text-right font-bold text-primary tabular-nums">{msToHHMM(s.fy)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-slate-50 font-bold border-t-2 border-slate-200">
+                        <TableCell>TOTAL</TableCell>
+                        <TableCell className="text-right tabular-nums">{msToHHMM(stats.reduce((a, b) => a + b.day, 0))}</TableCell>
+                        <TableCell className="text-right tabular-nums">{msToHHMM(stats.reduce((a, b) => a + b.week, 0))}</TableCell>
+                        <TableCell className="text-right tabular-nums">{msToHHMM(stats.reduce((a, b) => a + b.month, 0))}</TableCell>
+                        <TableCell className="text-right text-primary tabular-nums">{msToHHMM(stats.reduce((a, b) => a + b.fy, 0))}</TableCell>
+                      </TableRow>
+                    </>
+                  )}
                 </TableBody>
               </Table>
             </div>
             <p className="text-[10px] text-slate-400 mt-4 italic">
               * UK Financial Year runs from April 6th to April 5th.
             </p>
+          </CardContent>
+        </Card>
+
+        {/* Monthly Rota vs Actual Comparison */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="flex flex-row items-center gap-2">
+            <Calendar className="h-5 w-5 text-emerald-500" />
+            <CardTitle className="text-lg font-semibold">Monthly Comparison (Rota vs Actual)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-8">
+              {Object.entries(comparisonStats).map(([month, emps]) => (
+                <div key={month}>
+                  <h3 className="text-sm font-bold text-slate-500 mb-2 uppercase tracking-wider">{month} {new Date().getFullYear()}</h3>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-slate-50">
+                          <TableHead>Employee</TableHead>
+                          <TableHead className="text-right">Rota Hours</TableHead>
+                          <TableHead className="text-right">Actual Hours</TableHead>
+                          <TableHead className="text-right">Difference</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {Object.entries(emps).map(([id, data]) => {
+                          const diffMs = data.actualMs - data.rotaMs;
+                          const isOver = diffMs > 0;
+                          return (
+                            <TableRow key={id}>
+                              <TableCell className="font-medium">{data.name}</TableCell>
+                              <TableCell className="text-right tabular-nums">{msToHHMM(data.rotaMs)}</TableCell>
+                              <TableCell className="text-right tabular-nums">{msToHHMM(data.actualMs)}</TableCell>
+                              <TableCell className={`text-right tabular-nums font-bold ${isOver ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {isOver ? '+' : ''}{msToHHMM(Math.abs(diffMs))}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {/* Month Total Row */}
+                        <TableRow className="bg-slate-50 font-bold">
+                          <TableCell>TOTAL</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {msToHHMM(Object.values(emps).reduce((acc, curr) => acc + curr.rotaMs, 0))}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {msToHHMM(Object.values(emps).reduce((acc, curr) => acc + curr.actualMs, 0))}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {msToHHMM(Object.values(emps).reduce((acc, curr) => acc + (curr.actualMs - curr.rotaMs), 0))}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ))}
+              {Object.keys(comparisonStats).length === 0 && (
+                <p className="text-center py-4 text-slate-400">No data for the current year.</p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
