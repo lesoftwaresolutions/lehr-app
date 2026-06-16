@@ -8,13 +8,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
-interface BreakEntry { id: string; name: string; breakMs: number; workMs: number; }
+interface BreakEntry {
+  id: string;
+  name: string;
+  breakMs: number;
+  workMs: number;
+  startTime?: string; // HH:MM of login
+  breakStartTime?: string; // HH:MM of break start
+}
 
-// Helper for elapsed time (HHh MMm)
-function fmtElapsedShort(ms: number) {
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  return `${h > 0 ? h + 'h ' : ''}${m}m`;
+// Helper for elapsed time (HH:MM)
+function fmtHHMM(ms: number) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function fmtTimeOnly(iso: string) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 // Standardized actions
@@ -26,26 +39,35 @@ function isClockedIn (a: string){ return isLoginAct(a) || isBreakEnd(a); }
 function isOnBreakAct(a: string){ return isBreakStart(a); }
 
 function computeLiveStatus(logs: { employee_id: string; action: string; timestamp: string }[], tick: number) {
-  const byEmp: Record<string, { events: { action: string; ts: number }[] }> = {};
+  const byEmp: Record<string, { events: { action: string; ts: number; iso: string }[] }> = {};
   logs.forEach(l => {
     if (!byEmp[l.employee_id]) byEmp[l.employee_id] = { events: [] };
-    byEmp[l.employee_id].events.push({ action: l.action, ts: new Date(l.timestamp).getTime() });
+    byEmp[l.employee_id].events.push({ action: l.action, ts: new Date(l.timestamp).getTime(), iso: l.timestamp });
   });
 
   const lastActions: Record<string, string> = {};
   const breakMsMap: Record<string, number> = {};
   const workMsMap: Record<string, number> = {};
+  const loginTimeMap: Record<string, string> = {};
+  const lastBreakStartMap: Record<string, string> = {};
 
   Object.entries(byEmp).forEach(([id, { events }]) => {
     let workMs = 0, breakMs = 0;
     let lastWork: number | null = null, lastBreak: number | null = null;
+    let firstLogin: string | null = null;
+    let currentBreakStart: string | null = null;
 
-    events.forEach(({ action, ts }) => {
+    events.forEach(({ action, ts, iso }) => {
+      if (isLoginAct(action)) {
+        if (!firstLogin) firstLogin = iso;
+      }
+
       if (isLoginAct(action) || isBreakEnd(action)) {
         if (lastBreak !== null) { breakMs += ts - lastBreak; lastBreak = null; }
         lastWork = ts;
       }
       if (isBreakStart(action)) {
+        currentBreakStart = iso;
         if (lastWork !== null) { workMs += ts - lastWork; lastWork = null; }
         lastBreak = ts;
       }
@@ -61,9 +83,11 @@ function computeLiveStatus(logs: { employee_id: string; action: string; timestam
     lastActions[id] = events[events.length - 1]?.action ?? "";
     breakMsMap[id] = breakMs;
     workMsMap[id] = workMs;
+    loginTimeMap[id] = firstLogin || "";
+    lastBreakStartMap[id] = currentBreakStart || "";
   });
 
-  return { lastActions, breakMsMap, workMsMap };
+  return { lastActions, breakMsMap, workMsMap, loginTimeMap, lastBreakStartMap };
 }
 
 export default function DashboardPage() {
@@ -133,14 +157,21 @@ export default function DashboardPage() {
 
   // Compute status on logs/tick change
   React.useEffect(() => {
-    const { lastActions, breakMsMap, workMsMap } = computeLiveStatus(rawLogs, tick);
+    const { lastActions, breakMsMap, workMsMap, loginTimeMap, lastBreakStartMap } = computeLiveStatus(rawLogs, tick);
 
     const breakStaff: BreakEntry[] = [];
     const workingStaff: BreakEntry[] = [];
 
     Object.entries(lastActions).forEach(([id, action]) => {
       const emp = staffList.find(e => e.id === id);
-      const entry = { id, name: emp?.full_name ?? id, breakMs: breakMsMap[id] || 0, workMs: workMsMap[id] || 0 };
+      const entry: BreakEntry = {
+        id,
+        name: emp?.full_name ?? id,
+        breakMs: breakMsMap[id] || 0,
+        workMs: workMsMap[id] || 0,
+        startTime: loginTimeMap[id],
+        breakStartTime: lastBreakStartMap[id]
+      };
 
       if (isOnBreakAct(action)) breakStaff.push(entry);
       else if (isClockedIn(action)) workingStaff.push(entry);
@@ -290,9 +321,13 @@ export default function DashboardPage() {
             <div className="divide-y divide-slate-100">
               {activeStaff.length === 0 ? <p className="text-sm text-slate-400 py-2">No one working currently.</p> : activeStaff.map(e => (
                 <div key={e.id} className="flex items-center justify-between py-2.5">
-                  <span className="text-sm font-medium text-slate-800">{e.name}</span>
+                  <div>
+                    <span className="text-sm font-medium text-slate-800 block">{e.name}</span>
+                    <span className="text-[10px] text-slate-500">Started at {fmtTimeOnly(e.startTime || "")}</span>
+                  </div>
                   <div className="text-right">
-                    <span className="text-sm font-bold text-emerald-600">{fmtElapsedShort(e.workMs)}</span>
+                    <span className="text-sm font-bold text-emerald-600 tabular-nums">{fmtHHMM(e.workMs)}</span>
+                    <div className="text-[10px] text-slate-400 uppercase">Total Work</div>
                   </div>
                 </div>
               ))}
@@ -318,10 +353,13 @@ export default function DashboardPage() {
                   <div key={e.id} className="flex items-center justify-between py-2.5">
                     <div className="flex items-center gap-2.5">
                       {over ? <AlertTriangle size={15} className="text-rose-500 shrink-0" /> : <Coffee size={15} className="text-amber-400 shrink-0" />}
-                      <span className="text-sm font-medium text-slate-800">{e.name}</span>
+                      <div>
+                        <span className="text-sm font-medium text-slate-800 block">{e.name}</span>
+                        <span className="text-[10px] text-slate-500">Break at {fmtTimeOnly(e.breakStartTime || "")}</span>
+                      </div>
                     </div>
                     <div className="text-right">
-                      <span className={`text-sm font-bold ${over ? "text-rose-600" : "text-amber-600"}`}>{mins}m</span>
+                      <span className={`text-sm font-bold tabular-nums ${over ? "text-rose-600" : "text-amber-600"}`}>{fmtHHMM(e.breakMs)}</span>
                       <span className="text-slate-400 text-xs ml-1">/ {breakAllowance}m</span>
                       {over && <div className="text-[10px] text-rose-500 font-bold uppercase">{mins - breakAllowance}m over limit</div>}
                     </div>
