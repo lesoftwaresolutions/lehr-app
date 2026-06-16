@@ -1,0 +1,9 @@
+
+> @workspace/lehr@0.0.0 dev /app/artifacts/lehr
+> vite --config vite.config.ts --host 0.0.0.0
+
+
+  VITE v7.3.3  ready in 1246 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: http://192.168.0.2:3000/

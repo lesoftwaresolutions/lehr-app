@@ -38,6 +38,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshCompanies = useCallback(async (): Promise<Company[]> => {
+    if (!userId) return [];
+
     const { data } = await supabase
       .from("companies")
       .select("id, name, owner_id, created_at")
