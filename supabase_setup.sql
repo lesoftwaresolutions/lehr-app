@@ -96,12 +96,59 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Grant access to the RPC function
+-- Secure RPC to fetch kiosk data without public RLS
+CREATE OR REPLACE FUNCTION get_kiosk_data(p_company_id UUID)
+RETURNS JSON
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_company JSON;
+  v_logs JSON;
+  v_today DATE := (now() AT TIME ZONE 'UTC')::date;
+BEGIN
+  -- 1. Get company info
+  SELECT json_build_object(
+    'id', id,
+    'name', name,
+    'break_allowance_minutes', break_allowance_minutes
+  ) INTO v_company
+  FROM companies
+  WHERE id = p_company_id;
+
+  IF v_company IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- 2. Get today's logs for this company
+  SELECT json_agg(t) INTO v_logs
+  FROM (
+    SELECT
+      tl.employee_id,
+      tl.action,
+      tl.timestamp,
+      json_build_object('full_name', e.full_name) as employees
+    FROM time_logs tl
+    JOIN employees e ON tl.employee_id = e.id
+    WHERE tl.company_id = p_company_id
+    AND tl.timestamp >= v_today::timestamptz
+    ORDER BY tl.timestamp ASC
+  ) t;
+
+  RETURN json_build_object(
+    'company', v_company,
+    'logs', COALESCE(v_logs, '[]'::json)
+  );
+END;
+$$ LANGUAGE plpgsql;
+
 -- Grant access to the RPC and helper functions
 GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO anon;
 GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_kiosk_data(UUID) TO anon;
+GRANT EXECUTE ON FUNCTION get_kiosk_data(UUID) TO authenticated;
 
 -- 3. CLEANUP: Remove all old policies
 DO $$
@@ -125,18 +172,13 @@ ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 
 -- 5. COMPANIES TABLE POLICIES
--- Kiosk needs to see its own company name and settings
-CREATE POLICY "Kiosk Company Read"
-ON companies FOR SELECT
-TO anon
-USING (true);
-
--- Authenticated users: Owners and Employees can select
+-- Authenticated users: Owners and Employees can only see companies they belong to
 CREATE POLICY "User Select Company"
 ON companies FOR SELECT
 TO authenticated
 USING (check_company_access(id));
 
+-- Only the owner can manage company settings
 CREATE POLICY "Owner Manage Company"
 ON companies FOR ALL
 TO authenticated
@@ -179,6 +221,7 @@ USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
 -- 8. TIME LOGS TABLE POLICIES
+-- Authenticated users manage logs for their own company
 CREATE POLICY "User Manage Time Logs"
 ON time_logs FOR ALL
 TO authenticated
@@ -186,20 +229,12 @@ USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
 -- Kiosk inserts: Validate that the employee belongs to the company
--- Uses SECURITY DEFINER function to bypass RLS SELECT restrictions on employees table
+-- Only allowed for anon role to avoid leaking to other authenticated users
 CREATE POLICY "Kiosk insert"
 ON time_logs FOR INSERT
-TO anon, authenticated
+TO anon
 WITH CHECK (
   validate_kiosk_entry(employee_id, company_id)
-);
-
--- Kiosk select: ONLY today's logs
-CREATE POLICY "Kiosk select"
-ON time_logs FOR SELECT
-TO anon, authenticated
-USING (
-  timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz
 );
 
 -- 9. LEAVE REQUESTS TABLE POLICIES

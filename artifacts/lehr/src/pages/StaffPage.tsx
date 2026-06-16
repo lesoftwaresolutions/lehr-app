@@ -56,7 +56,7 @@ export default function StaffPage() {
         const { error } = await supabase.from('employees').update({
           ...formData,
           company_id: activeCompany?.id,
-        }).eq('id', editingStaff.id);
+        }).eq('id', editingStaff.id).eq('company_id', activeCompany?.id);
         if (error) throw error;
       } else {
         // 🚀 SECURE API CALL
@@ -90,7 +90,7 @@ export default function StaffPage() {
 
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('employees').delete().eq('id', id);
+    const { error } = await supabase.from('employees').delete().eq('id', id).eq('company_id', activeCompany?.id);
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
