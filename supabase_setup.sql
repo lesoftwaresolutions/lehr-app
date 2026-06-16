@@ -63,6 +63,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Helper to validate employee status for Kiosk clock-in without exposing employee table
+CREATE OR REPLACE FUNCTION validate_kiosk_entry(p_employee_id UUID, p_company_id UUID)
+RETURNS BOOLEAN
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM employees
+    WHERE id = p_employee_id
+    AND company_id = p_company_id
+    AND status = 'active'
+  );
+END;
+$$ LANGUAGE plpgsql;
+
 -- This allows checking a PIN without exposing the pin_code column via SELECT policies.
 CREATE OR REPLACE FUNCTION verify_employee_pin(p_company_id UUID, p_pin_code TEXT)
 RETURNS TABLE (id UUID, full_name TEXT)
@@ -81,8 +97,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Grant access to the RPC function
+-- Grant access to the RPC and helper functions
 GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO anon;
+GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO authenticated;
 
 -- 3. CLEANUP: Remove all old policies
 DO $$
@@ -167,16 +186,12 @@ USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
 -- Kiosk inserts: Validate that the employee belongs to the company
+-- Uses SECURITY DEFINER function to bypass RLS SELECT restrictions on employees table
 CREATE POLICY "Kiosk insert"
 ON time_logs FOR INSERT
 TO anon, authenticated
 WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM employees e
-    WHERE e.id = time_logs.employee_id
-    AND e.company_id = time_logs.company_id
-    AND e.status = 'active'
-  )
+  validate_kiosk_entry(employee_id, company_id)
 );
 
 -- Kiosk select: ONLY today's logs
