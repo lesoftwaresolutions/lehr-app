@@ -46,6 +46,23 @@ ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
   CHECK (action IN ('clock_in', 'clock_out', 'break_start', 'break_end'));
 
 -- 2. SECURE PIN VERIFICATION RPC
+-- 2. SECURE HELPER FUNCTIONS
+-- Helper to check if a user is an owner or employee of a company
+-- SECURITY DEFINER breaks recursion in RLS policies.
+CREATE OR REPLACE FUNCTION check_company_access(p_company_id UUID)
+RETURNS BOOLEAN
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM companies WHERE id = p_company_id AND owner_id = auth.uid()
+    UNION
+    SELECT 1 FROM employees WHERE company_id = p_company_id AND user_id = auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql;
+
 -- This allows checking a PIN without exposing the pin_code column via SELECT policies.
 CREATE OR REPLACE FUNCTION verify_employee_pin(p_company_id UUID, p_pin_code TEXT)
 RETURNS TABLE (id UUID, full_name TEXT)
@@ -92,8 +109,14 @@ ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 -- Kiosk needs to see its own company name and settings
 CREATE POLICY "Kiosk Company Read"
 ON companies FOR SELECT
-TO anon, authenticated
+TO anon
 USING (true);
+
+-- Authenticated users: Owners and Employees can select
+CREATE POLICY "User Select Company"
+ON companies FOR SELECT
+TO authenticated
+USING (check_company_access(id));
 
 CREATE POLICY "Owner Manage Company"
 ON companies FOR ALL
@@ -101,13 +124,19 @@ TO authenticated
 USING (owner_id = auth.uid())
 WITH CHECK (owner_id = auth.uid());
 
+-- Allow anyone authenticated to insert a company (e.g. during signup)
+CREATE POLICY "Enable insert for authenticated users only"
+ON companies FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = owner_id);
+
 -- 6. EMPLOYEES TABLE POLICIES
--- Admins manage their own staff
-CREATE POLICY "Admin Manage Employees"
+-- Admins manage their own staff, Employees can see their own record
+CREATE POLICY "User Manage Employees"
 ON employees FOR ALL
 TO authenticated
-USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
-WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
+USING (check_company_access(company_id))
+WITH CHECK (check_company_access(company_id));
 
 -- Kiosk: NO general select for anon. PIN verification is done via RPC.
 -- However, we might need a restricted select for the Kiosk to show names in "Active Now"
@@ -124,18 +153,18 @@ USING (
 );
 
 -- 7. SHIFTS TABLE POLICIES
-CREATE POLICY "Admin Manage Shifts"
+CREATE POLICY "User Manage Shifts"
 ON shifts FOR ALL
 TO authenticated
-USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
-WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
+USING (check_company_access(company_id))
+WITH CHECK (check_company_access(company_id));
 
 -- 8. TIME LOGS TABLE POLICIES
-CREATE POLICY "Admin Manage Time Logs"
+CREATE POLICY "User Manage Time Logs"
 ON time_logs FOR ALL
 TO authenticated
-USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
-WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
+USING (check_company_access(company_id))
+WITH CHECK (check_company_access(company_id));
 
 -- Kiosk inserts: Validate that the employee belongs to the company
 CREATE POLICY "Kiosk insert"
@@ -159,11 +188,11 @@ USING (
 );
 
 -- 9. LEAVE REQUESTS TABLE POLICIES
-CREATE POLICY "Admin Manage Leave Requests"
+CREATE POLICY "User Manage Leave Requests"
 ON leave_requests FOR ALL
 TO authenticated
-USING (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()))
-WITH CHECK (company_id IN (SELECT id FROM companies WHERE owner_id = auth.uid()));
+USING (check_company_access(company_id))
+WITH CHECK (check_company_access(company_id));
 
 -- 10. ENABLE REALTIME
 -- Check if publication exists first, then add tables

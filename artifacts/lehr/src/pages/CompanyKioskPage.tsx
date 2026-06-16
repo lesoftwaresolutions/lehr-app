@@ -259,7 +259,8 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     });
 
     if (rpcError || !data || data.length === 0) {
-      setError("PIN not recognised. Please try again.");
+      console.error("Kiosk: PIN verification error:", rpcError);
+      setError(rpcError?.message || "PIN not recognised. Please try again.");
       setPin(""); setPhase("idle");
       setTimeout(() => setError(null), 3000);
       return;
