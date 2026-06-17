@@ -145,67 +145,39 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     return () => clearInterval(t);
   }, []);
 
-  // Load company — public anon key, no session required.
-  useEffect(() => {
+  // Fetch kiosk data via secure RPC
+  const fetchKioskData = useCallback(async () => {
     if (!companyId) {
       setCompanyLoading(false);
       setCompanyError(true);
       return;
     }
-    setCompanyLoading(true);
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("companies")
-          .select("id, name, break_allowance_minutes")
-          .eq("id", companyId)
-          .maybeSingle();
 
-        if (error) return;
-        if (!data) { setCompanyError(true); return; }
+    try {
+      const { data, error } = await supabase.rpc('get_kiosk_data', {
+        p_company_id: companyId
+      });
 
-        setCompany({
-          id: data.id,
-          name: data.name,
-          break_allowance_minutes: data.break_allowance_minutes ?? null,
-        });
-      } catch {
-      } finally {
-        setCompanyLoading(false);
+      if (error || !data) {
+        console.error("Kiosk: Error fetching data:", error);
+        setCompanyError(true);
+        return;
       }
-    })();
-  }, [companyId]);
 
-  // Fetch today's time logs for right panel
-  const fetchLogs = useCallback(async () => {
-    if (!companyId) return;
-    const today = new Date().toISOString().split("T")[0];
-    const { data, error: fetchError } = await supabase
-      .from("time_logs")
-      .select(`
-        employee_id,
-        action,
-        timestamp,
-        employees (
-          full_name,
-          company_id
-        )
-      `)
-      .eq("company_id", companyId)
-      .gte("timestamp", `${today}T00:00:00`)
-      .order("timestamp", { ascending: true });
-
-    if (fetchError) {
-      console.error("Kiosk: Error fetching logs:", fetchError);
-      return;
-    }
-
-    if (data) {
-      setRawLogs(data as any[]);
+      setCompany(data.company);
+      setRawLogs(data.logs || []);
+    } catch (err) {
+      console.error("Kiosk: Unexpected error:", err);
+      setCompanyError(true);
+    } finally {
+      setCompanyLoading(false);
     }
   }, [companyId]);
 
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  useEffect(() => {
+    setCompanyLoading(true);
+    fetchKioskData();
+  }, [fetchKioskData]);
 
   // Real-time subscription
   useEffect(() => {
@@ -217,11 +189,11 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
         table: 'time_logs',
         filter: `company_id=eq.${companyId}`
       }, () => {
-        fetchLogs();
+        fetchKioskData();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [companyId, fetchLogs]);
+  }, [companyId, fetchKioskData]);
 
   // ── PIN handlers ─────────────────────────────────────────────────────────
   const resetToIdle = () => {

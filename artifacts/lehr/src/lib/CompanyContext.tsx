@@ -40,11 +40,30 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const refreshCompanies = useCallback(async (): Promise<Company[]> => {
     if (!userId) return [];
 
-    const { data } = await supabase
+    // Step 1: Get companies owned by the user
+    const { data: owned, error: ownedErr } = await supabase
       .from("companies")
       .select("id, name, owner_id, created_at")
-      .order("name");
-    const list = (data as Company[]) ?? [];
+      .eq("owner_id", userId);
+
+    if (ownedErr) console.error("Error fetching owned companies:", ownedErr);
+
+    // Step 2: Get companies where the user is an employee
+    const { data: employed, error: empErr } = await supabase
+      .from("employees")
+      .select("company_id, companies(id, name, owner_id, created_at)")
+      .eq("user_id", userId);
+
+    if (empErr) console.error("Error fetching employed companies:", empErr);
+
+    const ownedList = (owned as Company[]) ?? [];
+    const employedList = (employed?.map(e => Array.isArray(e.companies) ? e.companies[0] : e.companies) as Company[]) ?? [];
+
+    // Merge and deduplicate
+    const combined = [...ownedList, ...employedList];
+    const unique = Array.from(new Map(combined.filter(c => !!c).map(c => [c.id, c])).values());
+
+    const list = unique.sort((a, b) => a.name.localeCompare(b.name));
     setCompanies(list);
 
     const stored = localStorage.getItem(STORAGE_KEY);

@@ -71,7 +71,7 @@ export default function LeavePage() {
       supabase
         .from("leave_requests")
         .select("*, employees!inner(full_name, company_id)")
-        .eq("employees.company_id", activeCompany.id)
+        .eq("company_id", activeCompany.id)
         .order("created_at", { ascending: false }),
       supabase.from("employees").select("id, full_name").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),
     ]);
@@ -85,13 +85,15 @@ export default function LeavePage() {
   const pending = requests.filter(r => r.status === "pending");
 
   const handleStatus = async (id: string, status: "approved" | "denied") => {
-    const { error } = await supabase.from("leave_requests").update({ status }).eq("id", id);
+    if (!activeCompany) return;
+    const { error } = await supabase.from("leave_requests").update({ status }).eq("id", id).eq("company_id", activeCompany.id);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: status === "approved" ? "Request approved" : "Request denied" });
     fetchAll();
   };
 
   const handleCreate = async () => {
+    if (!form.employee_id || !form.start_date || !form.end_date || !activeCompany) {
     if (!activeCompany) return;
     if (!form.employee_id || !form.start_date || !form.end_date) {
       toast({ title: "Missing fields", description: "Employee, start and end dates are required.", variant: "destructive" });
@@ -101,6 +103,11 @@ export default function LeavePage() {
       toast({ title: "Invalid dates", description: "End date must be on or after start date.", variant: "destructive" });
       return;
     }
+    const { error } = await supabase.from("leave_requests").insert([{
+      ...form,
+      company_id: activeCompany.id,
+      status: "pending"
+    }]);
     const { error } = await supabase.from("leave_requests").insert([{ ...form, company_id: activeCompany.id, status: "pending" }]);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Leave request created" });

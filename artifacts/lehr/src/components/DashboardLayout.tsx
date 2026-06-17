@@ -37,6 +37,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
       supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "active"),
       supabase.from("time_logs")
         .select("employee_id, action, timestamp")
+        .eq("company_id", companyId)
         .gte("timestamp", `${today}T00:00:00`)
         .lte("timestamp", `${today}T23:59:59`)
         .order("timestamp", { ascending: true }),
