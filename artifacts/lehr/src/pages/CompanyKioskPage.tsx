@@ -246,14 +246,12 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     setPhase("processing");
     const now = new Date();
 
-    const { error: insertError } = await supabase
-      .from("time_logs")
-      .insert([{
-        employee_id: foundEmp.id,
-        company_id: companyId,
-        action,
-        timestamp: now.toISOString()
-      }]);
+    const { error: insertError } = await supabase.rpc("record_employee_time", {
+      p_company_id: companyId,
+      p_employee_id: foundEmp.id,
+      p_action: action,
+      p_timestamp: now.toISOString(),
+    });
 
     if (insertError) {
       console.error("Kiosk: Error inserting time log:", insertError);

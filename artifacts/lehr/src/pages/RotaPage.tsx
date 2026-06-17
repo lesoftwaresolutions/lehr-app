@@ -61,6 +61,7 @@ export default function RotaPage() {
     const [empRes, shiftRes] = await Promise.all([
       supabase.from("employees").select("*").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),
       supabase.from("shifts").select("*, employees(full_name)").eq("company_id", activeCompany.id).gte("date", fmtDate(weekStart)).lte("date", fmtDate(weekEnd)),
+      supabase.from("shifts").select("*, employees!inner(full_name, company_id)").eq("company_id", activeCompany.id).gte("date", fmtDate(weekStart)).lte("date", fmtDate(weekEnd)),
     ]);
     if (empRes.data) setEmployees(empRes.data);
     if (shiftRes.data) setShifts(shiftRes.data);
@@ -97,6 +98,12 @@ export default function RotaPage() {
       end_time: form.end_time,
       status: "scheduled"
     };
+    if (!activeCompany) return;
+    if (!form.employee_id || !form.date || !form.start_time || !form.end_time) {
+      toast({ title: "Missing fields", description: "Please fill all fields.", variant: "destructive" });
+      return;
+    }
+    const payload = { employee_id: form.employee_id, company_id: activeCompany.id, date: form.date, start_time: form.start_time, end_time: form.end_time, status: "scheduled" };
     const { error } = editingShift
       ? await supabase.from("shifts").update(payload).eq("id", editingShift.id).eq("company_id", activeCompany.id)
       : await supabase.from("shifts").insert([payload]);
