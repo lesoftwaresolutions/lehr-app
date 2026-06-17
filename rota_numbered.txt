@@ -1,0 +1,306 @@
+     1	import { useState, useEffect, useCallback } from "react";
+     2	import { DashboardLayout } from "@/components/DashboardLayout";
+     3	import { supabase } from "@/lib/supabaseClient";
+     4	import { useCompany } from "@/lib/CompanyContext";
+     5	import { Button } from "@/components/ui/button";
+     6	import { Badge } from "@/components/ui/badge";
+     7	import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+     8	import { Label } from "@/components/ui/label";
+     9	import { Input } from "@/components/ui/input";
+    10	import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    11	import { useToast } from "@/hooks/use-toast";
+    12	import { ChevronLeft, ChevronRight, Share2, Plus, Trash2, FileSpreadsheet, FileText } from "lucide-react";
+    13	import * as XLSX from "xlsx";
+    14	import jsPDF from "jspdf";
+    15	import autoTable from "jspdf-autotable";
+    16
+    17	function getWeekDates(offset: number) {
+    18	  const now = new Date();
+    19	  const monday = new Date(now);
+    20	  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7);
+    21	  monday.setHours(0, 0, 0, 0);
+    22	  return Array.from({ length: 7 }, (_, i) => {
+    23	    const d = new Date(monday);
+    24	    d.setDate(monday.getDate() + i);
+    25	    return d;
+    26	  });
+    27	}
+    28
+    29	function fmtDate(d: Date) {
+    30	  return d.toISOString().split("T")[0];
+    31	}
+    32
+    33	function fmtDay(d: Date) {
+    34	  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    35	}
+    36
+    37	function fmtTime(t: string) {
+    38	  return t?.slice(0, 5) ?? "";
+    39	}
+    40
+    41	export default function RotaPage() {
+    42	  const { toast } = useToast();
+    43	  const { activeCompany } = useCompany();
+    44	  const [weekOffset, setWeekOffset] = useState(0);
+    45	  const [employees, setEmployees] = useState<any[]>([]);
+    46	  const [shifts, setShifts] = useState<any[]>([]);
+    47	  const [isLoading, setIsLoading] = useState(true);
+    48	  const [dialogOpen, setDialogOpen] = useState(false);
+    49	  const [editingShift, setEditingShift] = useState<any>(null);
+    50	  const [form, setForm] = useState({ employee_id: "", date: "", start_time: "09:00", end_time: "17:00" });
+    51
+    52	  const weekDates = getWeekDates(weekOffset);
+    53	  const weekStart = weekDates[0];
+    54	  const weekEnd = weekDates[6];
+    55
+    56	  const weekLabel = `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+    57
+    58	  const fetchData = useCallback(async () => {
+    59	    if (!activeCompany) return;
+    60	    setIsLoading(true);
+    61	    const [empRes, shiftRes] = await Promise.all([
+    62	      supabase.from("employees").select("*").eq("status", "active").eq("company_id", activeCompany.id).order("full_name"),
+    63	      supabase.from("shifts").select("*, employees(full_name)").eq("company_id", activeCompany.id).gte("date", fmtDate(weekStart)).lte("date", fmtDate(weekEnd)),
+    64	    ]);
+    65	    if (empRes.data) setEmployees(empRes.data);
+    66	    if (shiftRes.data) setShifts(shiftRes.data);
+    67	    setIsLoading(false);
+    68	  }, [weekOffset, activeCompany]);
+    69
+    70	  useEffect(() => { fetchData(); }, [fetchData]);
+    71
+    72	  const getShift = (employeeId: string, date: Date) =>
+    73	    shifts.find(s => s.employee_id === employeeId && s.date === fmtDate(date));
+    74
+    75	  const openAdd = (employeeId: string, date: Date) => {
+    76	    setEditingShift(null);
+    77	    setForm({ employee_id: employeeId, date: fmtDate(date), start_time: "09:00", end_time: "17:00" });
+    78	    setDialogOpen(true);
+    79	  };
+    80
+    81	  const openEdit = (shift: any) => {
+    82	    setEditingShift(shift);
+    83	    setForm({ employee_id: shift.employee_id, date: shift.date, start_time: shift.start_time.slice(0,5), end_time: shift.end_time.slice(0,5) });
+    84	    setDialogOpen(true);
+    85	  };
+    86
+    87	  const handleSave = async () => {
+    88	    if (!form.employee_id || !form.date || !form.start_time || !form.end_time || !activeCompany) {
+    89	      toast({ title: "Missing fields", description: "Please fill all fields.", variant: "destructive" });
+    90	      return;
+    91	    }
+    92	    const payload = {
+    93	      employee_id: form.employee_id,
+    94	      company_id: activeCompany.id,
+    95	      date: form.date,
+    96	      start_time: form.start_time,
+    97	      end_time: form.end_time,
+    98	      status: "scheduled"
+    99	    };
+   100	    const { error } = editingShift
+   101	      ? await supabase.from("shifts").update(payload).eq("id", editingShift.id).eq("company_id", activeCompany.id)
+   102	      : await supabase.from("shifts").insert([payload]);
+   103	    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+   104	    toast({ title: "Shift saved" });
+   105	    setDialogOpen(false);
+   106	    fetchData();
+   107	  };
+   108
+   109	  const handleDelete = async () => {
+   110	    if (!editingShift || !activeCompany) return;
+   111	    const { error } = await supabase.from("shifts").delete().eq("id", editingShift.id).eq("company_id", activeCompany.id);
+   112	    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+   113	    toast({ title: "Shift deleted" });
+   114	    setDialogOpen(false);
+   115	    fetchData();
+   116	  };
+   117
+   118	  const buildRotaRows = () =>
+   119	    employees.map(emp => {
+   120	      const row: Record<string, string> = { Employee: emp.full_name };
+   121	      weekDates.forEach(d => {
+   122	        const shift = getShift(emp.id, d);
+   123	        row[fmtDay(d)] = shift ? `${fmtTime(shift.start_time)}-${fmtTime(shift.end_time)}` : "";
+   124	      });
+   125	      return row;
+   126	    });
+   127
+   128	  const handleExcelExport = () => {
+   129	    const rows = buildRotaRows();
+   130	    const ws = XLSX.utils.json_to_sheet(rows);
+   131	    const colWidths = [{ wch: 22 }, ...weekDates.map(() => ({ wch: 14 }))];
+   132	    ws["!cols"] = colWidths;
+   133	    const wb = XLSX.utils.book_new();
+   134	    XLSX.utils.book_append_sheet(wb, ws, "Rota");
+   135	    XLSX.writeFile(wb, `LEHR_Rota_${weekLabel.replace(/\s/g, "_").replace(/[–]/g, "-")}.xlsx`);
+   136	  };
+   137
+   138	  const handlePdfExport = () => {
+   139	    const doc = new jsPDF({ orientation: "landscape" });
+   140	    doc.setFontSize(13);
+   141	    doc.text(`LEHR — Rota: ${weekLabel}`, 14, 15);
+   142	    const head = [["Employee", ...weekDates.map(fmtDay)]];
+   143	    const body = buildRotaRows().map(row => [row["Employee"], ...weekDates.map(d => row[fmtDay(d)] || "")]);
+   144	    autoTable(doc, {
+   145	      head,
+   146	      body,
+   147	      startY: 22,
+   148	      styles: { fontSize: 8, cellPadding: 3 },
+   149	      headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: "bold" },
+   150	      alternateRowStyles: { fillColor: [241, 245, 249] },
+   151	      columnStyles: { 0: { fontStyle: "bold", cellWidth: 36 } },
+   152	    });
+   153	    doc.save(`LEHR_Rota_${weekLabel.replace(/\s/g, "_").replace(/[–]/g, "-")}.pdf`);
+   154	  };
+   155
+   156	  const handleWhatsApp = () => {
+   157	    let text = `LEHR Rota: ${weekLabel}\n\n`;
+   158	    employees.forEach(emp => {
+   159	      const empShifts = weekDates.map(d => ({ day: d, shift: getShift(emp.id, d) })).filter(x => x.shift);
+   160	      if (empShifts.length === 0) return;
+   161	      text += `${emp.full_name}\n`;
+   162	      empShifts.forEach(({ day, shift }) => {
+   163	        text += `${day.toLocaleDateString("en-GB", { weekday: "short" })}: ${fmtTime(shift.start_time)} - ${fmtTime(shift.end_time)}\n`;
+   164	      });
+   165	      text += "\n";
+   166	    });
+   167	    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+   168	  };
+   169
+   170	  return (
+   171	    <DashboardLayout title="Rota">
+   172	      {/* Week Navigator */}
+   173	      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+   174	        <div className="flex items-center gap-2">
+   175	          <Button variant="outline" size="icon" onClick={() => setWeekOffset(w => w - 1)} data-testid="button-prev-week">
+   176	            <ChevronLeft size={16} />
+   177	          </Button>
+   178	          <span className="text-sm font-semibold text-slate-700 min-w-[200px] text-center">{weekLabel}</span>
+   179	          <Button variant="outline" size="icon" onClick={() => setWeekOffset(w => w + 1)} data-testid="button-next-week">
+   180	            <ChevronRight size={16} />
+   181	          </Button>
+   182	          <Button variant="ghost" size="sm" onClick={() => setWeekOffset(0)} className="text-slate-500 text-xs" data-testid="button-this-week">This week</Button>
+   183	        </div>
+   184	        <div className="flex items-center gap-2">
+   185	          <Button onClick={handleExcelExport} variant="outline" className="gap-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50" data-testid="button-excel-export">
+   186	            <FileSpreadsheet size={16} />
+   187	            Excel
+   188	          </Button>
+   189	          <Button onClick={handlePdfExport} variant="outline" className="gap-2 text-red-700 border-red-300 hover:bg-red-50" data-testid="button-pdf-export">
+   190	            <FileText size={16} />
+   191	            PDF
+   192	          </Button>
+   193	          <Button onClick={handleWhatsApp} variant="outline" className="gap-2 text-green-700 border-green-300 hover:bg-green-50" data-testid="button-whatsapp-export">
+   194	            <Share2 size={16} />
+   195	            WhatsApp
+   196	          </Button>
+   197	        </div>
+   198	      </div>
+   199
+   200	      {/* Rota Grid */}
+   201	      <div className="bg-white rounded-lg border border-slate-200 overflow-x-auto shadow-sm">
+   202	        {isLoading ? (
+   203	          <div className="py-16 text-center text-slate-500">Loading rota...</div>
+   204	        ) : employees.length === 0 ? (
+   205	          <div className="py-16 text-center text-slate-500">
+   206	            <p className="font-medium">No active staff found.</p>
+   207	            <p className="text-sm mt-1">Add staff members first to build the rota.</p>
+   208	          </div>
+   209	        ) : (
+   210	          <table className="w-full min-w-[700px]">
+   211	            <thead>
+   212	              <tr className="border-b border-slate-200 bg-slate-50">
+   213	                <th className="text-left p-3 text-xs font-semibold text-slate-500 w-36">Employee</th>
+   214	                {weekDates.map((d, i) => (
+   215	                  <th key={i} className={`text-center p-3 text-xs font-semibold w-28 ${fmtDate(d) === fmtDate(new Date()) ? "text-primary" : "text-slate-500"}`}>
+   216	                    {fmtDay(d)}
+   217	                  </th>
+   218	                ))}
+   219	              </tr>
+   220	            </thead>
+   221	            <tbody>
+   222	              {employees.map(emp => (
+   223	                <tr key={emp.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+   224	                  <td className="p-3 text-sm font-medium text-slate-800">{emp.full_name}</td>
+   225	                  {weekDates.map((d, i) => {
+   226	                    const shift = getShift(emp.id, d);
+   227	                    return (
+   228	                      <td key={i} className="p-2 text-center">
+   229	                        {shift ? (
+   230	                          <button
+   231	                            onClick={() => openEdit(shift)}
+   232	                            data-testid={`shift-${emp.id}-${fmtDate(d)}`}
+   233	                            className="w-full rounded-md bg-primary/10 border border-primary/20 text-primary text-xs font-medium px-1 py-2 hover:bg-primary/20 transition-colors"
+   234	                          >
+   235	                            {fmtTime(shift.start_time)}<br />{fmtTime(shift.end_time)}
+   236	                          </button>
+   237	                        ) : (
+   238	                          <button
+   239	                            onClick={() => openAdd(emp.id, d)}
+   240	                            data-testid={`add-shift-${emp.id}-${fmtDate(d)}`}
+   241	                            className="w-full rounded-md border border-dashed border-slate-200 text-slate-300 text-xs py-2 hover:border-primary hover:text-primary transition-colors"
+   242	                          >
+   243	                            <Plus size={12} className="mx-auto" />
+   244	                          </button>
+   245	                        )}
+   246	                      </td>
+   247	                    );
+   248	                  })}
+   249	                </tr>
+   250	              ))}
+   251	            </tbody>
+   252	          </table>
+   253	        )}
+   254	      </div>
+   255
+   256	      {/* Add / Edit Shift Dialog */}
+   257	      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+   258	        <DialogContent>
+   259	          <DialogHeader>
+   260	            <DialogTitle>{editingShift ? "Edit Shift" : "Add Shift"}</DialogTitle>
+   261	          </DialogHeader>
+   262	          <div className="space-y-4 py-2">
+   263	            {!editingShift && (
+   264	              <div className="space-y-2">
+   265	                <Label>Employee</Label>
+   266	                <Select value={form.employee_id} onValueChange={v => setForm(f => ({ ...f, employee_id: v }))}>
+   267	                  <SelectTrigger data-testid="select-employee"><SelectValue placeholder="Select employee" /></SelectTrigger>
+   268	                  <SelectContent>
+   269	                    {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.full_name}</SelectItem>)}
+   270	                  </SelectContent>
+   271	                </Select>
+   272	              </div>
+   273	            )}
+   274	            <div className="space-y-2">
+   275	              <Label>Date</Label>
+   276	              <Input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} data-testid="input-shift-date" />
+   277	            </div>
+   278	            <div className="grid grid-cols-2 gap-4">
+   279	              <div className="space-y-2">
+   280	                <Label>Start Time</Label>
+   281	                <Input type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} data-testid="input-start-time" />
+   282	              </div>
+   283	              <div className="space-y-2">
+   284	                <Label>End Time</Label>
+   285	                <Input type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} data-testid="input-end-time" />
+   286	              </div>
+   287	            </div>
+   288	          </div>
+   289	          <div className="flex justify-between items-center pt-2">
+   290	            <div>
+   291	              {editingShift && (
+   292	                <Button variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50 gap-2" onClick={handleDelete} data-testid="button-delete-shift">
+   293	                  <Trash2 size={15} /> Delete
+   294	                </Button>
+   295	              )}
+   296	            </div>
+   297	            <div className="flex gap-2">
+   298	              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+   299	              <Button onClick={handleSave} data-testid="button-save-shift">Save Shift</Button>
+   300	            </div>
+   301	          </div>
+   302	        </DialogContent>
+   303	      </Dialog>
+   304	    </DashboardLayout>
+   305	  );
+   306	}

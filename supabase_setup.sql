@@ -185,53 +185,6 @@ CREATE TRIGGER on_company_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_company_insertion();
 
 -- 3. CLEANUP: Remove all old policies to ensure no leakage
--- 2b. SECURE KIOSK TIME RECORDING RPC
--- Kiosk writes must not depend on anon SELECT access to employees. If the
--- INSERT RLS policy checks employees directly, the first clock-in of the day can
--- fail because the kiosk employee-name SELECT policy only exposes employees who
--- already have a time log today. This SECURITY DEFINER function validates the
--- employee/company relationship privately and then inserts the time log.
-CREATE OR REPLACE FUNCTION record_employee_time(
-  p_company_id UUID,
-  p_employee_id UUID,
-  p_action TEXT,
-  p_timestamp TIMESTAMPTZ DEFAULT now()
-)
-RETURNS UUID
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_log_id UUID;
-BEGIN
-  IF p_action NOT IN ('clock_in', 'clock_out', 'break_start', 'break_end') THEN
-    RAISE EXCEPTION 'Invalid time log action: %', p_action
-      USING ERRCODE = '22023';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM employees e
-    WHERE e.id = p_employee_id
-      AND e.company_id = p_company_id
-      AND e.status = 'active'
-  ) THEN
-    RAISE EXCEPTION 'Employee is not active for this company'
-      USING ERRCODE = '42501';
-  END IF;
-
-  INSERT INTO time_logs (employee_id, company_id, action, timestamp)
-  VALUES (p_employee_id, p_company_id, p_action, COALESCE(p_timestamp, now()))
-  RETURNING id INTO v_log_id;
-
-  RETURN v_log_id;
-END;
-$$ LANGUAGE plpgsql;
-
-GRANT EXECUTE ON FUNCTION record_employee_time(UUID, UUID, TEXT, TIMESTAMPTZ) TO anon;
-GRANT EXECUTE ON FUNCTION record_employee_time(UUID, UUID, TEXT, TIMESTAMPTZ) TO authenticated;
-
--- 3. CLEANUP: Remove all old policies
 DO $$
 DECLARE r RECORD;
 BEGIN

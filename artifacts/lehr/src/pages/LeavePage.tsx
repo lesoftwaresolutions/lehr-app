@@ -94,8 +94,6 @@ export default function LeavePage() {
 
   const handleCreate = async () => {
     if (!form.employee_id || !form.start_date || !form.end_date || !activeCompany) {
-    if (!activeCompany) return;
-    if (!form.employee_id || !form.start_date || !form.end_date) {
       toast({ title: "Missing fields", description: "Employee, start and end dates are required.", variant: "destructive" });
       return;
     }
@@ -108,7 +106,6 @@ export default function LeavePage() {
       company_id: activeCompany.id,
       status: "pending"
     }]);
-    const { error } = await supabase.from("leave_requests").insert([{ ...form, company_id: activeCompany.id, status: "pending" }]);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Leave request created" });
     setDialogOpen(false);
