@@ -47,9 +47,9 @@ ALTER TABLE time_logs ADD CONSTRAINT time_logs_action_check
 
 -- 2. SECURE PIN VERIFICATION RPC
 -- 2. SECURE HELPER FUNCTIONS
--- Helper to check if a user is an owner or employee of a company
--- SECURITY DEFINER breaks recursion in RLS policies.
-CREATE OR REPLACE FUNCTION check_company_access(p_company_id UUID)
+-- 2. SECURE HELPER FUNCTIONS & RPCs
+-- Helper to check if a user is the OWNER of a company.
+CREATE OR REPLACE FUNCTION is_company_owner(p_company_id UUID)
 RETURNS BOOLEAN
 SECURITY DEFINER
 SET search_path = public
@@ -57,13 +57,36 @@ AS $$
 BEGIN
   RETURN EXISTS (
     SELECT 1 FROM companies WHERE id = p_company_id AND owner_id = auth.uid()
-    UNION
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper to check if a user is an EMPLOYEE of a company.
+CREATE OR REPLACE FUNCTION is_company_employee(p_company_id UUID)
+RETURNS BOOLEAN
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
     SELECT 1 FROM employees WHERE company_id = p_company_id AND user_id = auth.uid()
   );
 END;
 $$ LANGUAGE plpgsql;
 
--- Helper to validate employee status for Kiosk clock-in without exposing employee table
+-- Helper to check if a user has access to a company (either as owner or employee).
+CREATE OR REPLACE FUNCTION check_company_access(p_company_id UUID)
+RETURNS BOOLEAN
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN FALSE; END IF;
+  RETURN is_company_owner(p_company_id) OR is_company_employee(p_company_id);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper to validate employee status for Kiosk clock-in without exposing employee table directly
 CREATE OR REPLACE FUNCTION validate_kiosk_entry(p_employee_id UUID, p_company_id UUID)
 RETURNS BOOLEAN
 SECURITY DEFINER
@@ -96,7 +119,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Secure RPC to fetch kiosk data without public RLS
+-- Secure RPC to fetch kiosk data without public RLS SELECT policies on companies/employees
 CREATE OR REPLACE FUNCTION get_kiosk_data(p_company_id UUID)
 RETURNS JSON
 SECURITY DEFINER
@@ -120,7 +143,7 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  -- 2. Get today's logs for this company
+  -- 2. Get today's logs for this company (includes employee names)
   SELECT json_agg(t) INTO v_logs
   FROM (
     SELECT
@@ -143,14 +166,25 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Grant access to the RPC and helper functions
-GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO anon;
-GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO anon;
-GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION get_kiosk_data(UUID) TO anon;
-GRANT EXECUTE ON FUNCTION get_kiosk_data(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION verify_employee_pin(UUID, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION validate_kiosk_entry(UUID, UUID) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_kiosk_data(UUID) TO anon, authenticated;
 
--- 3. CLEANUP: Remove all old policies
+-- Enforce owner_id on insertion via Trigger
+CREATE OR REPLACE FUNCTION public.handle_company_insertion()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.owner_id := auth.uid();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_company_created ON companies;
+CREATE TRIGGER on_company_created
+  BEFORE INSERT ON companies
+  FOR EACH ROW EXECUTE FUNCTION public.handle_company_insertion();
+
+-- 3. CLEANUP: Remove all old policies to ensure no leakage
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -164,7 +198,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- 4. ENABLE RLS
+-- 4. ENABLE RLS (Crucial for multi-tenancy)
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shifts ENABLE ROW LEVEL SECURITY;
@@ -172,73 +206,65 @@ ALTER TABLE time_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 
 -- 5. COMPANIES TABLE POLICIES
--- Authenticated users: Owners and Employees can only see companies they belong to
-CREATE POLICY "User Select Company"
+-- KFC owner should ONLY see KFC, Costa owner should ONLY see Costa.
+CREATE POLICY "Users see their owned companies"
 ON companies FOR SELECT
 TO authenticated
-USING (check_company_access(id));
+USING (owner_id = auth.uid());
 
--- Only the owner can manage company settings
-CREATE POLICY "Owner Manage Company"
+CREATE POLICY "Employees see their employer company"
+ON companies FOR SELECT
+TO authenticated
+USING (EXISTS (
+  SELECT 1 FROM employees
+  WHERE employees.company_id = companies.id
+  AND employees.user_id = auth.uid()
+));
+
+CREATE POLICY "Owners manage their companies"
 ON companies FOR ALL
 TO authenticated
 USING (owner_id = auth.uid())
 WITH CHECK (owner_id = auth.uid());
 
--- Allow anyone authenticated to insert a company (e.g. during signup)
-CREATE POLICY "Enable insert for authenticated users only"
+CREATE POLICY "Allow company creation"
 ON companies FOR INSERT
 TO authenticated
 WITH CHECK (auth.uid() = owner_id);
 
 -- 6. EMPLOYEES TABLE POLICIES
--- Admins manage their own staff, Employees can see their own record
-CREATE POLICY "User Manage Employees"
+-- Strictly isolated by company_id. Users can only see/manage staff if they have company access.
+CREATE POLICY "Isolated Employee Access"
 ON employees FOR ALL
 TO authenticated
 USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
--- Kiosk: NO general select for anon. PIN verification is done via RPC.
--- However, we might need a restricted select for the Kiosk to show names in "Active Now"
--- but ONLY if they have logged in today.
-CREATE POLICY "Kiosk employee name lookup"
-ON employees FOR SELECT
-TO anon
-USING (
-  EXISTS (
-    SELECT 1 FROM time_logs tl
-    WHERE tl.employee_id = employees.id
-    AND tl.timestamp >= (now() AT TIME ZONE 'UTC')::date::timestamptz
-  )
-);
+-- No anonymous select on employees (Kiosk uses RPCs)
 
 -- 7. SHIFTS TABLE POLICIES
-CREATE POLICY "User Manage Shifts"
+CREATE POLICY "Isolated Shift Access"
 ON shifts FOR ALL
 TO authenticated
 USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
 -- 8. TIME LOGS TABLE POLICIES
--- Authenticated users manage logs for their own company
-CREATE POLICY "User Manage Time Logs"
+CREATE POLICY "Isolated Time Log Access"
 ON time_logs FOR ALL
 TO authenticated
 USING (check_company_access(company_id))
 WITH CHECK (check_company_access(company_id));
 
--- Kiosk inserts: Validate that the employee belongs to the company
--- Only allowed for anon role to avoid leaking to other authenticated users
-CREATE POLICY "Kiosk insert"
+-- Kiosk inserts: Validate that the employee belongs to the company.
+-- Role restricted to 'anon' for security.
+CREATE POLICY "Kiosk Secure Insert"
 ON time_logs FOR INSERT
 TO anon
-WITH CHECK (
-  validate_kiosk_entry(employee_id, company_id)
-);
+WITH CHECK (validate_kiosk_entry(employee_id, company_id));
 
 -- 9. LEAVE REQUESTS TABLE POLICIES
-CREATE POLICY "User Manage Leave Requests"
+CREATE POLICY "Isolated Leave Access"
 ON leave_requests FOR ALL
 TO authenticated
 USING (check_company_access(company_id))

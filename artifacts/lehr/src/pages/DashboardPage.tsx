@@ -198,7 +198,11 @@ export default function DashboardPage() {
       return;
     }
     setSavingBreak(true);
-    const { error } = await supabase.from("companies").update({ break_allowance_minutes: mins }).eq("id", activeCompany.id);
+    const { error } = await supabase
+      .from("companies")
+      .update({ break_allowance_minutes: mins })
+      .eq("id", activeCompany.id)
+      .eq("owner_id", activeCompany.owner_id);
     setSavingBreak(false);
     if (error) {
       toast({ title: "Could not save", description: error.message, variant: "destructive" });

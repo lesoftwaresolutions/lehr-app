@@ -98,7 +98,7 @@ export default function RotaPage() {
       status: "scheduled"
     };
     const { error } = editingShift
-      ? await supabase.from("shifts").update(payload).eq("id", editingShift.id)
+      ? await supabase.from("shifts").update(payload).eq("id", editingShift.id).eq("company_id", activeCompany.id)
       : await supabase.from("shifts").insert([payload]);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Shift saved" });
@@ -107,8 +107,8 @@ export default function RotaPage() {
   };
 
   const handleDelete = async () => {
-    if (!editingShift) return;
-    const { error } = await supabase.from("shifts").delete().eq("id", editingShift.id);
+    if (!editingShift || !activeCompany) return;
+    const { error } = await supabase.from("shifts").delete().eq("id", editingShift.id).eq("company_id", activeCompany.id);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Shift deleted" });
     setDialogOpen(false);

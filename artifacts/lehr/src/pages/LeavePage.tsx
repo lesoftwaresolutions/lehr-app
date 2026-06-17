@@ -85,7 +85,8 @@ export default function LeavePage() {
   const pending = requests.filter(r => r.status === "pending");
 
   const handleStatus = async (id: string, status: "approved" | "denied") => {
-    const { error } = await supabase.from("leave_requests").update({ status }).eq("id", id);
+    if (!activeCompany) return;
+    const { error } = await supabase.from("leave_requests").update({ status }).eq("id", id).eq("company_id", activeCompany.id);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: status === "approved" ? "Request approved" : "Request denied" });
     fetchAll();

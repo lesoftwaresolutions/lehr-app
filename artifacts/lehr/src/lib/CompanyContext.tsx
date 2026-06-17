@@ -41,16 +41,20 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (!userId) return [];
 
     // Step 1: Get companies owned by the user
-    const { data: owned } = await supabase
+    const { data: owned, error: ownedErr } = await supabase
       .from("companies")
       .select("id, name, owner_id, created_at")
       .eq("owner_id", userId);
 
+    if (ownedErr) console.error("Error fetching owned companies:", ownedErr);
+
     // Step 2: Get companies where the user is an employee
-    const { data: employed } = await supabase
+    const { data: employed, error: empErr } = await supabase
       .from("employees")
       .select("company_id, companies(id, name, owner_id, created_at)")
       .eq("user_id", userId);
+
+    if (empErr) console.error("Error fetching employed companies:", empErr);
 
     const ownedList = (owned as Company[]) ?? [];
     const employedList = (employed?.map(e => Array.isArray(e.companies) ? e.companies[0] : e.companies) as Company[]) ?? [];
