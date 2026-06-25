@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-export default async function handler(req, res) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -12,7 +13,12 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing Supabase configuration" });
   }
 
-  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
 
   try {
     const authHeader = req.headers.authorization;
@@ -21,6 +27,7 @@ export default async function handler(req, res) {
     }
 
     const token = authHeader.replace("Bearer ", "");
+    // Use admin.getUser to verify the manager's token
     const { data: { user }, error: verifyError } = await supabaseAdmin.auth.getUser(token);
 
     if (verifyError || !user) {
@@ -33,6 +40,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // Verify company ownership
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
       .select("id")
@@ -44,6 +52,7 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: "Unauthorized: You do not own this company" });
     }
 
+    // Create auth user
     const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password: 'TemporaryPassword123!',
@@ -55,6 +64,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: authError.message });
     }
 
+    // Create employee record
     const { error: empError } = await supabaseAdmin
       .from('employees')
       .insert([{
