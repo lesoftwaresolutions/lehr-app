@@ -124,7 +124,7 @@ const ACTION_LABELS: Record<KioskAction, string> = {
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function CompanyKioskPage({ companyId = "" }: { companyId?: string }) {
   const [company, setCompany]           = useState<Company | null>(null);
-  const [companyError, setCompanyError] = useState(false);
+  const [companyError, setCompanyError] = useState<string | null>(null);
   const [companyLoading, setCompanyLoading] = useState(true);
   const [pin, setPin]                   = useState("");
   const [phase, setPhase]               = useState<Phase>("idle");
@@ -147,9 +147,21 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
   // Fetch kiosk data via secure RPC
   const fetchKioskData = useCallback(async () => {
-    if (!companyId) {
+    console.log("Kiosk DEBUG: Attempting to fetch data. companyId:", companyId);
+    console.log("Kiosk DEBUG: Current URL:", window.location.href);
+
+    // More lenient check or better error message
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!companyId || companyId === ":companyId" || companyId === "undefined") {
+       setCompanyLoading(false);
+       setCompanyError("No company ID provided in the URL.");
+       return;
+    }
+
+    if (!uuidRegex.test(companyId)) {
+      console.error("Kiosk: Invalid UUID format:", companyId);
       setCompanyLoading(false);
-      setCompanyError(true);
+      setCompanyError(`Invalid ID format: "${companyId}". It must be a valid UUID.`);
       return;
     }
 
@@ -160,15 +172,21 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
 
       if (error || !data) {
         console.error("Kiosk: Error fetching data:", error);
-        setCompanyError(true);
+        let msg = "Kiosk not found or database error.";
+        if (error?.message?.includes("function") && error?.message?.includes("does not exist")) {
+          msg = "Critical: Database setup incomplete (RPC 'get_kiosk_data' missing). Please run the SQL setup script.";
+        } else if (error?.message) {
+          msg = `Error: ${error.message}`;
+        }
+        setCompanyError(msg);
         return;
       }
 
       setCompany(data.company);
       setRawLogs(data.logs || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Kiosk: Unexpected error:", err);
-      setCompanyError(true);
+      setCompanyError(err.message || "An unexpected error occurred.");
     } finally {
       setCompanyLoading(false);
     }
@@ -301,13 +319,17 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
     );
   }
 
-  if (companyError || !company) {
+  if (companyError || (!company && !companyLoading)) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-center p-8">
-        <div>
-          <p className="text-slate-400 text-sm mb-2">Kiosk not found</p>
-          <p className="text-xl font-semibold">Invalid company link.</p>
-          <p className="text-slate-500 text-sm mt-2">Please ask your manager for the correct kiosk URL.</p>
+        <div className="max-w-md">
+          <p className="text-rose-400 text-sm mb-2 font-bold uppercase tracking-widest">Kiosk Error</p>
+          <p className="text-xl font-semibold">{companyError || "Company not found"}</p>
+          <p className="text-slate-500 text-sm mt-4">
+            {companyError?.includes("SQL")
+              ? "The administrator needs to run the 'supabase_setup.sql' script in the Supabase Dashboard."
+              : "Please verify the link or ask your manager for the correct kiosk URL."}
+          </p>
         </div>
       </div>
     );
@@ -446,7 +468,7 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
       <div className="hidden md:flex flex-col w-[55%] p-10 overflow-y-auto">
         <div className="mb-8">
           <p className="text-slate-500 text-xs uppercase tracking-widest font-semibold mb-1">Workplace</p>
-          <h1 className="text-4xl font-bold text-white leading-tight">{company.name}</h1>
+          <h1 className="text-4xl font-bold text-white leading-tight">{company?.name || "Loading..."}</h1>
           <p className="text-slate-400 text-sm mt-1">
             {clock.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>

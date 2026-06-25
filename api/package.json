@@ -1,0 +1,14 @@
+{
+  "name": "@workspace/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.48.0"
+  },
+  "devDependencies": {
+    "@vercel/node": "^5.8.19",
+    "@types/node": "catalog:",
+    "typescript": "~5.9.3"
+  }
+}
