@@ -182,7 +182,9 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
   // Real-time subscription
   useEffect(() => {
     if (!companyId) return;
-    const channel = supabase.channel('kiosk-realtime')
+    // Use a per-company channel name so multiple kiosks (different companies)
+    // don't share a channel and interfere with each other.
+    const channel = supabase.channel(`kiosk-realtime-${companyId}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
