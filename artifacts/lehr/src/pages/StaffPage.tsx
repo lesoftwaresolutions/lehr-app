@@ -62,9 +62,11 @@ export default function StaffPage() {
         // 🚀 SECURE API CALL
         const { data: { session } } = await supabase.auth.getSession();
 
-        // In production, the API server would be at a known URL (e.g. api.domain.com or /api subpath)
-        // For this demo/setup, we assume the API is reachable at /api
-        const response = await fetch(`${window.location.origin}/api/create-employee`, {
+        // API base URL is set via VITE_API_BASE_URL in the frontend Vercel project.
+        // For local dev this falls back to /api (proxied by vite.config.ts).
+        // In production set VITE_API_BASE_URL=https://lehr-app-api-server.vercel.app
+        const apiBase = import.meta.env.VITE_API_BASE_URL ?? "";
+        const response = await fetch(`${apiBase}/api/create-employee`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

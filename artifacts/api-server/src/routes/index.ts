@@ -4,15 +4,21 @@ import healthRouter from "./health";
 
 const router: IRouter = Router();
 
-// These environment variables MUST be set in Vercel
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+// SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in Vercel environment variables.
+// NOTE: Do NOT use VITE_SUPABASE_URL here — the VITE_ prefix is a Vite build-time
+// convention injected into the browser bundle only. It is NOT available in Node.js.
+const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.error("Missing Supabase configuration in api-server");
+  // Fail hard at startup so misconfiguration is immediately obvious in Vercel logs
+  throw new Error(
+    "Missing required environment variables: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY. " +
+    "Set them in the Vercel project settings for the API server."
+  );
 }
 
-const supabaseAdmin = createClient(supabaseUrl!, supabaseServiceKey!);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 // Health check route
 router.use(healthRouter);
