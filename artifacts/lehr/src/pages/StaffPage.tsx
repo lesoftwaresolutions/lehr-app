@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,7 +15,8 @@ import { Loader2 } from "lucide-react";
 
 // ─── API client ────────────────────────────────────────────────────────────────
 // Always call /api/create-employee relative to the current origin.
-// vercel.json rewrites /api/* → the API server, so no hardcoded URL is needed.
+// /api/create-employee.ts is a Vercel serverless function in this same project,
+// so no hardcoded URL or rewrite is needed.
 // This works in dev (Vite proxy), staging, and production without any env var.
 async function createEmployee(payload: {
   full_name: string;
@@ -260,6 +261,11 @@ export default function StaffPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingStaff ? "Edit Staff Member" : "Add Staff Member"}</DialogTitle>
+            <DialogDescription>
+              {editingStaff
+                ? "Update this team member's details."
+                : "Enter the new team member's details to add them to your staff."}
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
