@@ -13,6 +13,11 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
+function generateTempPassword(): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$";
+  return Array.from({ length: 20 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -32,20 +37,68 @@ export default async function handler(req: any, res: any) {
     });
   }
 
+  // Require a valid Supabase session — this endpoint uses the service role
+  // key and must never be reachable by an unauthenticated caller.
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or malformed Authorization header." });
+  }
+
+  const { data: { user: requester }, error: sessionError } =
+    await supabaseAdmin.auth.getUser(authHeader.slice(7));
+
+  if (sessionError || !requester) {
+    return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+  }
+
   try {
     const { full_name, email, pin_code, role, company_id } = req.body ?? {};
 
-    if (!email || !full_name || !pin_code) {
+    if (!email || !full_name || !pin_code || !company_id) {
       return res
         .status(400)
-        .json({ error: "Missing required fields: email, full_name, or pin_code" });
+        .json({ error: "Missing required fields: email, full_name, pin_code, or company_id" });
+    }
+
+    if (!/^\d{4}$/.test(pin_code)) {
+      return res.status(400).json({ error: "PIN must be exactly 4 digits." });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Invalid email address." });
+    }
+
+    // Verify the requester owns this company before letting them add staff to it.
+    const { data: company, error: companyError } = await supabaseAdmin
+      .from("companies")
+      .select("id")
+      .eq("id", company_id)
+      .eq("owner_id", requester.id)
+      .single();
+
+    if (companyError || !company) {
+      return res.status(403).json({ error: "You do not have permission to add staff to this company." });
+    }
+
+    // Check for duplicate PIN within the company.
+    const { data: pinConflict } = await supabaseAdmin
+      .from("employees")
+      .select("id, full_name")
+      .eq("company_id", company_id)
+      .eq("pin_code", pin_code)
+      .single();
+
+    if (pinConflict) {
+      return res.status(409).json({
+        error: `PIN ${pin_code} is already in use by ${pinConflict.full_name}. Please choose a different PIN.`,
+      });
     }
 
     // Step A: Create the user in Supabase Auth.
     const { data: authUser, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email,
-        password: "TemporaryPassword123!",
+        password: generateTempPassword(),
         email_confirm: true,
         user_metadata: { full_name },
       });
@@ -58,7 +111,7 @@ export default async function handler(req: any, res: any) {
         full_name,
         email,
         pin_code,
-        role,
+        role: role ?? "staff",
         company_id,
         user_id: authUser.user.id,
       },
