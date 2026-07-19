@@ -50,6 +50,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   // Attach user to request for downstream handlers
   (req as any).user = user;
   next();
+  return;
 }
 
 // ─── POST /api/create-employee ────────────────────────────────────────────────
