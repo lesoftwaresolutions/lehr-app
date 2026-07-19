@@ -1,16 +1,16 @@
 {
   "name": "lehr",
-  "buildCommand": "pnpm --filter @workspace/lehr run build:vercel",
+  "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/lehr run build:vercel",
   "outputDirectory": "artifacts/lehr/dist",
   "installCommand": "pnpm install",
   "framework": null,
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://lehr-app-api-server.vercel.app/api/:path*"
+      "destination": "/api/index.ts"
     },
     {
-      "source": "/:path*",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ],
