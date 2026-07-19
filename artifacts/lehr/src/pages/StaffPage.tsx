@@ -194,6 +194,24 @@ export default function StaffPage() {
 
     try {
       if (editingStaff) {
+        if (localStorage.getItem("mock_mode") === "true") {
+          setStaff(prev => prev.map(s => s.id === editingStaff.id ? {
+            ...s,
+            full_name: formData.full_name.trim(),
+            email: formData.email.trim(),
+            pin_code: formData.pin_code,
+            role: formData.role,
+            status: formData.status,
+          } : s));
+          toast({
+            title: "Staff member updated (Mock Mode)",
+            description: `${formData.full_name} has been updated successfully.`,
+          });
+          closeDialog();
+          setIsSaving(false);
+          return;
+        }
+
         // Edit: direct Supabase update (no auth server needed)
         const { error } = await supabase
           .from("employees")
@@ -209,6 +227,29 @@ export default function StaffPage() {
 
         if (error) throw error;
       } else {
+        if (localStorage.getItem("mock_mode") === "true") {
+          const newId = String(staff.length + 1);
+          setStaff(prev => [
+            ...prev,
+            {
+              id: newId,
+              full_name: formData.full_name.trim(),
+              email: formData.email.trim(),
+              pin_code: formData.pin_code,
+              role: formData.role,
+              status: formData.status,
+              company_id: activeCompany.id,
+            }
+          ]);
+          toast({
+            title: "Staff member added (Mock Mode)",
+            description: `${formData.full_name} has been added successfully.`,
+          });
+          closeDialog();
+          setIsSaving(false);
+          return;
+        }
+
         // Create: goes via API server so a Supabase Auth account is also created
         const { data: { session } } = await supabase.auth.getSession();
 
@@ -241,6 +282,11 @@ export default function StaffPage() {
 
   // ── Delete ────────────────────────────────────────────────────────────────
   const handleDelete = async (id: string, name: string) => {
+    if (localStorage.getItem("mock_mode") === "true") {
+      setStaff(prev => prev.filter(s => s.id !== id));
+      toast({ title: "Staff member removed (Mock Mode)", description: `${name} has been deleted.` });
+      return;
+    }
     try {
       const { error } = await supabase
         .from("employees")

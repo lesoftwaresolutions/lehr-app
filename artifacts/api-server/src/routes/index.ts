@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { createClient } from "@supabase/supabase-js";
-import healthRouter from "./health";
+import healthRouter from "./health.js";
 
 const router: IRouter = Router();
 
