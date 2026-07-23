@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import healthRouter from "./health";
 
-const router: IRouter = Router();
+const router = Router() as any;
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in Vercel environment
@@ -44,7 +44,7 @@ function getSupabaseAdmin(): SupabaseClient {
 router.use(healthRouter);
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
-async function requireAuth(req: Request, res: Response, next: NextFunction) {
+async function requireAuth(req: any, res: any, next: any) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -78,7 +78,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 // ─── POST /api/create-employee ────────────────────────────────────────────────
-router.post("/create-employee", requireAuth, async (req: Request, res: Response) => {
+router.post("/create-employee", requireAuth, async (req: any, res: any) => {
   const user = (req as any).user;
 
   try {
