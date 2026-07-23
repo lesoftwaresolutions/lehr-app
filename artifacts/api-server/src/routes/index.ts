@@ -1,34 +1,39 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { createClient } from "@supabase/supabase-js";
-import healthRouter from "./health";
+import healthRouter from "./health.js";
 
 const router: IRouter = Router();
 
-// ─── Supabase admin client ────────────────────────────────────────────────────
-// SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in Vercel environment
-// variables for the lehr-app-api-server project.
-// Do NOT use VITE_SUPABASE_URL — the VITE_ prefix is a Vite browser-only
-// build-time convention and is never available in Node.js.
-const supabaseUrl = process.env.SUPABASE_URL?.trim();
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+// ─── Supabase admin client helper ─────────────────────────────────────────────
+// Deferred initialization prevents the backend from crashing during Vercel's
+// function boot/evaluation time if env vars are missing or not fully populated yet.
+let _supabaseAdmin: any = null;
 
-if (!supabaseUrl || !supabaseUrl.startsWith("https://")) {
-  throw new Error(
-    "[lehr-api] Missing or invalid SUPABASE_URL environment variable. " +
-    "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
-  );
+function getSupabaseAdmin() {
+  if (_supabaseAdmin) return _supabaseAdmin;
+
+  const supabaseUrl = process.env.SUPABASE_URL?.trim();
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+
+  if (!supabaseUrl || !supabaseUrl.startsWith("https://")) {
+    throw new Error(
+      "Missing or invalid SUPABASE_URL environment variable. " +
+      "Please set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
+    );
+  }
+
+  if (!supabaseServiceKey || supabaseServiceKey.length < 10) {
+    throw new Error(
+      "Missing or invalid SUPABASE_SERVICE_ROLE_KEY environment variable. " +
+      "Please set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
+    );
+  }
+
+  _supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return _supabaseAdmin;
 }
-
-if (!supabaseServiceKey || supabaseServiceKey.length < 100) {
-  throw new Error(
-    "[lehr-api] Missing or invalid SUPABASE_SERVICE_ROLE_KEY environment variable. " +
-    "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
-  );
-}
-
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 router.use(healthRouter);
@@ -41,16 +46,23 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 
   const token = authHeader.slice(7);
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
-  if (error || !user) {
-    return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+    }
+
+    // Attach user to request for downstream handlers
+    (req as any).user = user;
+    next();
+    return;
+  } catch (err: any) {
+    console.error("[lehr-api] Auth error / env var missing:", err);
+    return res.status(500).json({ error: err.message ?? "Server configuration error. Contact administrator." });
   }
-
-  // Attach user to request for downstream handlers
-  (req as any).user = user;
-  next();
-  return;
 }
 
 // ─── POST /api/create-employee ────────────────────────────────────────────────
@@ -58,6 +70,7 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
   const user = (req as any).user;
 
   try {
+    const supabaseAdmin = getSupabaseAdmin();
     const { full_name, email, pin_code, role, company_id } = req.body as {
       full_name?: string;
       email?: string;
