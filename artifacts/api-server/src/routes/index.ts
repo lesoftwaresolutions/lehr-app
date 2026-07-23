@@ -45,31 +45,36 @@ router.use(healthRouter);
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or malformed Authorization header." });
-  }
-
-  const token = authHeader.slice(7);
-
-  let admin;
   try {
-    admin = getSupabaseAdmin();
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing or malformed Authorization header." });
+    }
+
+    const token = authHeader.slice(7);
+
+    let admin;
+    try {
+      admin = getSupabaseAdmin();
+    } catch (err: any) {
+      console.error("[lehr-api] Error initializing Supabase Admin in requireAuth:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+
+    const { data: { user }, error } = await admin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+    }
+
+    // Attach user to request for downstream handlers
+    (req as any).user = user;
+    next();
+    return;
   } catch (err: any) {
-    console.error("[lehr-api] Error initializing Supabase Admin in requireAuth:", err.message);
-    return res.status(500).json({ error: err.message });
+    console.error("[lehr-api] Unexpected error in requireAuth:", err);
+    return res.status(500).json({ error: "Authentication check failed: " + err.message });
   }
-
-  const { data: { user }, error } = await admin.auth.getUser(token);
-
-  if (error || !user) {
-    return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
-  }
-
-  // Attach user to request for downstream handlers
-  (req as any).user = user;
-  next();
-  return;
 }
 
 // ─── POST /api/create-employee ────────────────────────────────────────────────
