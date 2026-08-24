@@ -2,7 +2,7 @@ import React from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Clock, Users, Building, Link2, Copy, Check, Coffee, AlertTriangle } from "lucide-react";
+import { Calendar, Clock, Users, Building, Link2, Copy, Check, Coffee, AlertTriangle, LogOut } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -121,13 +121,23 @@ export default function DashboardPage() {
     const companyId = activeCompany.id;
     const today = new Date().toISOString().split("T")[0];
 
+    // "Active Now" / "On Break" must reflect a persistent work session, not a
+    // "today" query window — an employee who forgot to clock out yesterday
+    // (or last week) must keep showing as active until they explicitly clock
+    // out or a manager closes the shift. get_active_employees() returns each
+    // employee's current OPEN session only (everything since their last
+    // clock_out), regardless of what date it started on.
     const [staffRes, shiftsRes, leaveRes, clockRes, companyRes] = await Promise.all([
       supabase.from("employees").select("*").eq("company_id", companyId).eq("status", "active"),
       supabase.from("shifts").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("date", today),
       supabase.from("leave_requests").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "pending"),
-      supabase.from("time_logs").select("employee_id, action, timestamp").eq("company_id", companyId).gte("timestamp", `${today}T00:00:00`).order("timestamp", { ascending: true }),
+      supabase.rpc("get_active_employees", { p_company_id: companyId }),
       supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
     ]);
+
+    if (clockRes.error) {
+      console.error("Failed to load active employees:", clockRes.error);
+    }
 
     const allowance = (companyRes.data as any)?.break_allowance_minutes ?? 30;
     setBreakAllowance(allowance);
@@ -181,6 +191,24 @@ export default function DashboardPage() {
     setActiveStaff(workingStaff);
     setStats(s => ({ ...s, clockedIn: workingStaff.length, onBreak: breakStaff.length }));
   }, [rawLogs, staffList, tick]);
+
+  const [closingId, setClosingId] = React.useState<string | null>(null);
+
+  const closeShift = async (employeeId: string, name: string) => {
+    if (!activeCompany) return;
+    setClosingId(employeeId);
+    const { error } = await supabase.rpc("close_employee_shift", {
+      p_employee_id: employeeId,
+      p_company_id: activeCompany.id,
+    });
+    setClosingId(null);
+    if (error) {
+      toast({ title: "Could not close shift", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Shift closed", description: `${name} has been clocked out.` });
+      fetchAll();
+    }
+  };
 
   const copyKioskUrl = () => {
     navigator.clipboard.writeText(kioskUrl).then(() => {
@@ -324,14 +352,27 @@ export default function DashboardPage() {
           <CardContent>
             <div className="divide-y divide-slate-100">
               {activeStaff.length === 0 ? <p className="text-sm text-slate-400 py-2">No one working currently.</p> : activeStaff.map(e => (
-                <div key={e.id} className="flex items-center justify-between py-2.5">
+                <div key={e.id} className="flex items-center justify-between py-2.5 gap-3">
                   <div>
                     <span className="text-sm font-medium text-slate-800 block">{e.name}</span>
                     <span className="text-[10px] text-slate-500">Started at {fmtTimeOnly(e.startTime || "")}</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-bold text-emerald-600 tabular-nums">{fmtHHMM(e.workMs)}</span>
-                    <div className="text-[10px] text-slate-400 uppercase">Total Work</div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <span className="text-sm font-bold text-emerald-600 tabular-nums">{fmtHHMM(e.workMs)}</span>
+                      <div className="text-[10px] text-slate-400 uppercase">Total Work</div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-[11px] text-slate-500 hover:text-rose-600 hover:border-rose-300"
+                      disabled={closingId === e.id}
+                      onClick={() => closeShift(e.id, e.name)}
+                      title="Manually close this shift (use if the employee forgot to clock out)"
+                    >
+                      <LogOut className="h-3 w-3 mr-1" />
+                      {closingId === e.id ? "Closing…" : "Close Shift"}
+                    </Button>
                   </div>
                 </div>
               ))}

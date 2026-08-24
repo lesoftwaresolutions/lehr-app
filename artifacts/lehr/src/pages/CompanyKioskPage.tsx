@@ -263,17 +263,18 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
       return;
     }
 
-    // Compute total hours for logout message
+    // Compute total hours for the clock-out message from this employee's
+    // current open session (rawLogs, already scoped to "since their last
+    // clock_out" by get_kiosk_data) plus the clock_out event just recorded.
+    // Computed client-side from data already in hand rather than a fresh
+    // date-windowed query, so a session that started on an earlier day
+    // still totals correctly.
     let totalHoursStr = "";
     if (action === "clock_out") {
-      const today = now.toISOString().split("T")[0];
-      const { data: todayLogs } = await supabase
-        .from("time_logs")
-        .select("action, timestamp")
-        .eq("employee_id", foundEmp.id)
-        .gte("timestamp", `${today}T00:00:00`)
-        .order("timestamp", { ascending: true });
-      const events = (todayLogs ?? []).map(l => ({ action: l.action, ts: new Date(l.timestamp).getTime() }));
+      const events = rawLogs
+        .filter(l => l.employee_id === foundEmp.id)
+        .map(l => ({ action: l.action, ts: new Date(l.timestamp).getTime() }));
+      events.push({ action: "clock_out", ts: now.getTime() });
       const hrs = computeTotalWork(events);
       totalHoursStr = ` · ${hrs.toFixed(2)} hrs worked`;
     }
@@ -398,7 +399,17 @@ export default function CompanyKioskPage({ companyId = "" }: { companyId?: strin
             {phase === "action" && (
               <>
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  {BUTTONS.map(({ action, label, bg, text, ring }) => (
+                  {BUTTONS
+                    // Only offer actions that are valid for the employee's
+                    // current persisted session state, so a returning
+                    // employee can't accidentally start a second overlapping
+                    // clock_in (or clock out twice) — see get_active_employees.
+                    .filter(({ action }) => {
+                      if (!empLive) return action === "clock_in";
+                      if (empOnBreak) return action === "clock_out" || action === "break_end";
+                      return action === "clock_out" || action === "break_start";
+                    })
+                    .map(({ action, label, bg, text, ring }) => (
                     <button
                       key={action}
                       onClick={() => handleAction(action)}
