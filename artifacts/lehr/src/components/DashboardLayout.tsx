@@ -31,20 +31,19 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
 
   useEffect(() => {
     if (!companyId) return;
-    const today = new Date().toISOString().split("T")[0];
 
+    // Mirrors DashboardPage.tsx: "Active Now" must be derived from each
+    // employee's persistent open session (get_active_employees), not a
+    // "today" date window — otherwise a forgotten clock-out silently drops
+    // off this sidebar stat the moment the calendar date changes.
     Promise.all([
       supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "active"),
-      supabase.from("time_logs")
-        .select("employee_id, action, timestamp")
-        .eq("company_id", companyId)
-        .gte("timestamp", `${today}T00:00:00`)
-        .lte("timestamp", `${today}T23:59:59`)
-        .order("timestamp", { ascending: true }),
+      supabase.rpc("get_active_employees", { p_company_id: companyId }),
     ]).then(([empRes, logRes]) => {
       const totalStaff = empRes.count ?? 0;
       const empIdSet = new Set((empRes as any).data?.map((e: any) => e.id) ?? []);
       const allLogs = (logRes.data ?? []) as { employee_id: string; action: string; timestamp: string }[];
+      if (logRes.error) console.error("Failed to load active employees:", logRes.error);
       const logs = empIdSet.size > 0
         ? allLogs.filter(l => empIdSet.has(l.employee_id))
         : allLogs;
