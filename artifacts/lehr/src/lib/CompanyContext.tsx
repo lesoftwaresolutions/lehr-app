@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 
@@ -33,6 +33,33 @@ const CompanyContext = createContext<CompanyContextValue>({
 
 const STORAGE_KEY = "lehr_active_company_id";
 
+// With email confirmation ON, signUp() returns no session, so the company can't
+// be created at registration. The company name is stored in the user's metadata
+// instead, and created here on their first confirmed sign-in (when they own no
+// company yet). Returns null when there is nothing pending.
+async function createCompanyFromSignupMetadata(userId: string): Promise<Company | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const pendingName = session?.user?.user_metadata?.company_name;
+  if (typeof pendingName !== "string" || !pendingName.trim()) return null;
+
+  const { data, error } = await supabase
+    .from("companies")
+    .insert([{ name: pendingName.trim(), owner_id: userId }])
+    .select(COMPANY_COLUMNS)
+    .single();
+
+  if (error || !data) {
+    console.error("Could not create company from signup details:", error);
+    return null;
+  }
+
+  // Clear the pending name so it can never create a second company.
+  const { error: clearErr } = await supabase.auth.updateUser({ data: { company_name: null } });
+  if (clearErr) console.error("Could not clear pending company name:", clearErr);
+
+  return data as unknown as Company;
+}
+
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   // Use a stable primitive (userId string or null) as the effect dependency.
@@ -42,6 +69,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeCompany, setActiveCompanyState] = useState<Company | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Shared so overlapping refreshes (e.g. React StrictMode) await one creation.
+  const createPromise = useRef<Promise<Company | null> | null>(null);
 
   const refreshCompanies = useCallback(async (): Promise<Company[]> => {
     if (localStorage.getItem("mock_mode") === "true") {
@@ -85,7 +114,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     const combined = [...ownedList, ...employedList];
     const unique = Array.from(new Map(combined.filter(c => !!c).map(c => [c.id, c])).values());
 
-    const list = unique.sort((a, b) => a.name.localeCompare(b.name));
+    let list = unique.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (list.length === 0) {
+      if (!createPromise.current) {
+        createPromise.current = createCompanyFromSignupMetadata(userId).finally(() => {
+          createPromise.current = null;
+        });
+      }
+      const created = await createPromise.current;
+      if (created) list = [created];
+    }
+
     setCompanies(list);
 
     const stored = localStorage.getItem(STORAGE_KEY);

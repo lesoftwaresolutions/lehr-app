@@ -37,7 +37,7 @@ export default function LandingPage() {
                 Get Started for Free
               </Button>
             </Link>
-            <p className="text-sm text-slate-500 sm:hidden">No credit card required</p>
+            <p className="text-sm text-slate-500 sm:hidden">14-day free trial · cancel anytime</p>
           </div>
         </section>
 

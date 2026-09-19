@@ -15,7 +15,10 @@ function friendlyAuthError(message: string): string {
   if (m.includes("too many") || m.includes("rate") || m.includes("429")) {
     return "Too many attempts — please wait a few minutes and try again.";
   }
-  if (m.includes("invalid login") || m.includes("invalid credentials") || m.includes("email not confirmed")) {
+  if (m.includes("email not confirmed")) {
+    return "Please confirm your email first — check your inbox for the confirmation link.";
+  }
+  if (m.includes("invalid login") || m.includes("invalid credentials")) {
     return "Incorrect email or password. Please check and try again.";
   }
   if (m.includes("user already registered") || m.includes("already exists")) {
@@ -43,15 +46,16 @@ export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState<string | null>(null);
   const [connStatus, setConnStatus] = useState<"checking" | "ok" | "error">("checking");
   const [connError, setConnError] = useState("");
 
   // Redirect to dashboard if already logged in
   useEffect(() => {
     if (authReady && session) {
-      setLocation("/dashboard");
+      setLocation(planParam ? `/choose-plan${planQuery}` : "/dashboard");
     }
-  }, [authReady, session, setLocation]);
+  }, [authReady, session, setLocation, planParam, planQuery]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ error }) => {
@@ -115,32 +119,30 @@ export default function AuthPage() {
     }
     try {
       setIsLoading(true);
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      // The company name travels in the user's metadata; CompanyProvider creates
+      // the company on the first signed-in session. That works whether or not
+      // Supabase requires email confirmation (which returns no session here).
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { company_name: companyName.trim() },
+          emailRedirectTo: `${window.location.origin}/choose-plan${planQuery}`,
+        },
+      });
       if (error) throw error;
 
-      const user = data.user;
-      if (!user) throw new Error("Sign up succeeded but no user returned.");
+      if (!data.user) throw new Error("Sign up succeeded but no user returned.");
 
-      // Create the company record immediately
-      const { data: company, error: companyError } = await supabase
-        .from("companies")
-        .insert([{ name: companyName.trim(), owner_id: user.id }])
-        .select()
-        .single();
-
-      if (companyError) {
-        toast({
-          title: "Account created",
-          description: "Your account is ready. You can add your company from the dashboard.",
-        });
-      } else {
-        // Store the new company ID so CompanyProvider picks it up after redirect
-        localStorage.setItem("lehr_active_company_id", company.id);
-        toast({ title: "Account created!", description: `Welcome to LEHR — ${company.name} is ready.` });
+      if (!data.session) {
+        // Email confirmation is required: wait for the user to click the link.
+        setAwaitingConfirmation(email);
+        return;
       }
 
       // New companies start unsubscribed — send them to plan selection.
       // SubscriptionGate would bounce them here anyway; this keeps the ?plan hint.
+      toast({ title: "Account created!", description: "Now choose a plan to get started." });
       setLocation(`/choose-plan${planQuery}`);
     } catch (error: any) {
       toast({
@@ -152,6 +154,51 @@ export default function AuthPage() {
       setIsLoading(false);
     }
   };
+
+  const handleResendConfirmation = async () => {
+    if (!awaitingConfirmation) return;
+    try {
+      setIsLoading(true);
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: awaitingConfirmation,
+        options: { emailRedirectTo: `${window.location.origin}/choose-plan${planQuery}` },
+      });
+      if (error) throw error;
+      toast({ title: "Email sent", description: `We've sent another confirmation link to ${awaitingConfirmation}.` });
+    } catch (error: any) {
+      toast({
+        title: "Could not resend email",
+        description: friendlyAuthError(error?.message || "An unexpected error occurred."),
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (awaitingConfirmation) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4">
+        <Card className="w-full max-w-md shadow-xl border-slate-200 p-8 text-center" data-testid="confirm-email-card">
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Check your email</h1>
+          <p className="text-slate-600 mb-6">
+            We've sent a confirmation link to <span className="font-medium">{awaitingConfirmation}</span>.
+            Click it to verify your address, then you'll choose your plan to get started.
+          </p>
+          <div className="space-y-3">
+            <Button variant="outline" className="w-full" onClick={handleResendConfirmation} disabled={isLoading}>
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Resend email
+            </Button>
+            <Button variant="ghost" className="w-full text-slate-500" onClick={() => setAwaitingConfirmation(null)}>
+              Back to sign in
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4">
@@ -249,7 +296,7 @@ export default function AuthPage() {
           <TabsContent value="signup" className="p-6 m-0">
             <CardHeader className="p-0 mb-6">
               <CardTitle>Start your free trial</CardTitle>
-              <CardDescription>Get your business organised in minutes. No credit card required.</CardDescription>
+              <CardDescription>Get your business organised in minutes. 14-day free trial — you won't be charged until it ends.</CardDescription>
             </CardHeader>
             <div className="space-y-4">
               <div className="space-y-2">

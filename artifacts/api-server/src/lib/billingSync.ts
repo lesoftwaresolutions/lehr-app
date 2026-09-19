@@ -41,8 +41,10 @@ export async function syncSubscriptionToDb(
   const plan: PlanId | null = planForPriceId(priceId);
   const appStatus = mapStripeStatus(subscription.status);
 
-  const isActive = subscription.status === "active" || subscription.status === "trialing";
-  const employeeLimit = isActive && plan ? EMPLOYEE_LIMITS[plan] : 0;
+  // past_due keeps the plan's limit: it is a grace period (Stripe is still
+  // retrying the payment), matching the dashboard access it is granted.
+  const keepsLimit = ["active", "trialing", "past_due"].includes(subscription.status);
+  const employeeLimit = keepsLimit && plan ? EMPLOYEE_LIMITS[plan] : 0;
 
   // `current_period_end` is top-level on older API versions and per-item on
   // newer ones (Basil+). Check both.
