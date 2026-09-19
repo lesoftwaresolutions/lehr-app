@@ -160,6 +160,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.106.1
+      stripe:
+        specifier: ^18.0.0
+        version: 18.5.0(@types/node@25.6.2)
     devDependencies:
       '@esbuild/darwin-arm64':
         specifier: ^0.28.0
@@ -3105,6 +3108,15 @@ packages:
     resolution: {integrity: sha512-1tB5mhVo7U+ETBKNf92xT4hrQa3pm0MZ0PQvuDnWgAAGHDsfp4lPSpiS6psrSiet87wyGPh9ft6wmhOMQ0hDiw==}
     engines: {node: '>=14.16'}
 
+  stripe@18.5.0:
+    resolution: {integrity: sha512-Hp+wFiEQtCB0LlNgcFh5uVyKznpDjzyUZ+CNVEf+I3fhlYvh7rZruIg+jOwzJRCpy0ZTPMjlzm7J2/M2N6d+DA==}
+    engines: {node: '>=12.*'}
+    peerDependencies:
+      '@types/node': '>=12.x.x'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
+
   svg-pathdata@6.0.3:
     resolution: {integrity: sha512-qsjeeq5YjBZ5eMdFuUa4ZosMLxgr5RZ+F+Y1OrDhuOCEInRMA3x74XdBtggJcj9kOeInz0WE+LgCPDkZFlBYJw==}
     engines: {node: '>=12.0.0'}
@@ -5845,6 +5857,12 @@ snapshots:
   strip-final-newline@4.0.0: {}
 
   strip-json-comments@5.0.3: {}
+
+  stripe@18.5.0(@types/node@25.6.2):
+    dependencies:
+      qs: 6.15.1
+    optionalDependencies:
+      '@types/node': 25.6.2
 
   svg-pathdata@6.0.3:
     optional: true

@@ -7,7 +7,13 @@ export type Company = {
   name: string;
   owner_id: string;
   created_at: string;
+  subscription_status: string;
+  plan: "micro" | "growth" | "professional" | null;
+  employee_limit: number;
 };
+
+const COMPANY_COLUMNS =
+  "id, name, owner_id, created_at, subscription_status, plan, employee_limit";
 
 type CompanyContextValue = {
   companies: Company[];
@@ -43,7 +49,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     // Step 1: Get companies owned by the user
     const { data: owned, error: ownedErr } = await supabase
       .from("companies")
-      .select("id, name, owner_id, created_at")
+      .select(COMPANY_COLUMNS)
       .eq("owner_id", userId);
 
     if (ownedErr) console.error("Error fetching owned companies:", ownedErr);
@@ -51,7 +57,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     // Step 2: Get companies where the user is an employee
     const { data: employed, error: empErr } = await supabase
       .from("employees")
-      .select("company_id, companies(id, name, owner_id, created_at)")
+      .select(`company_id, companies(${COMPANY_COLUMNS})`)
       .eq("user_id", userId);
 
     if (empErr) console.error("Error fetching employed companies:", empErr);

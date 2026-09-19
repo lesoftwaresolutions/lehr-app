@@ -71,13 +71,40 @@ export default async function handler(req: any, res: any) {
     // Verify the requester owns this company before letting them add staff to it.
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
-      .select("id")
+      .select("id, subscription_status, plan, employee_limit")
       .eq("id", company_id)
       .eq("owner_id", requester.id)
       .single();
 
     if (companyError || !company) {
       return res.status(403).json({ error: "You do not have permission to add staff to this company." });
+    }
+
+    // Require an active/trialing/past_due subscription to add staff.
+    if (!["active", "trialing", "past_due"].includes(company.subscription_status)) {
+      return res.status(402).json({
+        code: "NO_SUBSCRIPTION",
+        error: "Your subscription is not active. Visit Billing to choose or renew a plan.",
+      });
+    }
+
+    // Enforce the plan's employee limit (active employees only).
+    const limit = Number(company.employee_limit) || 0;
+    const { count: activeCount, error: countError } = await supabaseAdmin
+      .from("employees")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", company_id)
+      .eq("status", "active");
+
+    if (countError) throw countError;
+
+    if ((activeCount ?? 0) >= limit) {
+      return res.status(403).json({
+        code: "EMPLOYEE_LIMIT",
+        error: `You've reached your ${company.plan ?? "current"} plan limit of ${limit} employees. Upgrade your plan on the Billing page to add more.`,
+        limit,
+        plan: company.plan,
+      });
     }
 
     // Check for duplicate PIN within the company.

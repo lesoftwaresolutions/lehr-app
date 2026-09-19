@@ -34,6 +34,11 @@ export default function AuthPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { session, authReady } = useAuth();
+
+  // A ?plan=... query (from the landing-page pricing buttons) preselects the
+  // signup tab and is carried through to /choose-plan after registration.
+  const planParam = new URLSearchParams(window.location.search).get("plan");
+  const planQuery = planParam ? `?plan=${encodeURIComponent(planParam)}` : "";
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -134,8 +139,9 @@ export default function AuthPage() {
         toast({ title: "Account created!", description: `Welcome to LEHR — ${company.name} is ready.` });
       }
 
-      // AuthGuard + CompanyProvider handle the rest after we land on /dashboard
-      setLocation("/dashboard");
+      // New companies start unsubscribed — send them to plan selection.
+      // SubscriptionGate would bounce them here anyway; this keeps the ?plan hint.
+      setLocation(`/choose-plan${planQuery}`);
     } catch (error: any) {
       toast({
         title: "Sign up failed",
@@ -168,7 +174,7 @@ export default function AuthPage() {
       )}
 
       <Card className="w-full max-w-md shadow-xl border-slate-200">
-        <Tabs defaultValue="login" className="w-full">
+        <Tabs defaultValue={planParam ? "signup" : "login"} className="w-full">
           <TabsList className="grid w-full grid-cols-2 rounded-none rounded-t-lg border-b bg-slate-50 p-0 h-14">
             <TabsTrigger
               value="login"

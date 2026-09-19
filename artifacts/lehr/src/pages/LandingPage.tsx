@@ -99,7 +99,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-micro">
+                <Link href="/auth?plan=micro" className="w-full" data-testid="button-pricing-micro">
                   <Button variant="outline" className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
@@ -129,7 +129,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-growth">
+                <Link href="/auth?plan=growth" className="w-full" data-testid="button-pricing-growth">
                   <Button className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
@@ -156,7 +156,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-pro">
+                <Link href="/auth?plan=professional" className="w-full" data-testid="button-pricing-pro">
                   <Button variant="outline" className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
