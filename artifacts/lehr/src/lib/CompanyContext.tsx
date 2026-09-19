@@ -44,6 +44,22 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshCompanies = useCallback(async (): Promise<Company[]> => {
+    if (localStorage.getItem("mock_mode") === "true") {
+      const mockList: Company[] = [{
+        id: "mock-company-id",
+        name: "Mock Company",
+        owner_id: "mock-user-id",
+        created_at: new Date().toISOString(),
+        subscription_status: "active",
+        plan: "professional",
+        employee_limit: 30,
+      }];
+      setCompanies(mockList);
+      setActiveCompanyState(mockList[0]);
+      setIsLoading(false);
+      return mockList;
+    }
+
     if (!userId) return [];
 
     // Step 1: Get companies owned by the user

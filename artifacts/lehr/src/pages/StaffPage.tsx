@@ -110,6 +110,21 @@ export default function StaffPage() {
   const fetchStaff = React.useCallback(async () => {
     if (!activeCompany) return;
     setIsLoading(true);
+    if (localStorage.getItem("mock_mode") === "true") {
+      setStaff([
+        {
+          id: "1",
+          full_name: "john",
+          email: "john@example.com",
+          pin_code: "2222",
+          role: "staff",
+          status: "active",
+          company_id: "mock-company-id"
+        }
+      ]);
+      setIsLoading(false);
+      return;
+    }
     try {
       const { data, error } = await supabase
         .from("employees")

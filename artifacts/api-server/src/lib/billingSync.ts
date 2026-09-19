@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { getStripe, getSupabaseAdmin } from "./stripe";
+import { getStripe, getBillingSupabaseAdmin } from "./clients";
 import { EMPLOYEE_LIMITS, mapStripeStatus, planForPriceId, type PlanId } from "./plans";
 
 /**
@@ -14,18 +14,16 @@ export async function syncSubscriptionToDb(
   subscriptionOrId: string | Stripe.Subscription,
 ): Promise<void> {
   const stripe = getStripe();
-  const supabase = getSupabaseAdmin();
+  const supabase = getBillingSupabaseAdmin();
 
   const subscription: Stripe.Subscription =
     typeof subscriptionOrId === "string"
       ? await stripe.subscriptions.retrieve(subscriptionOrId)
       : subscriptionOrId;
 
-  // Resolve the company this subscription belongs to.
-  let companyId = subscription.metadata?.company_id ?? null;
+  let companyId: string | null = subscription.metadata?.company_id ?? null;
 
   if (!companyId) {
-    // Fall back to an existing row keyed by the subscription id.
     const { data: existing } = await supabase
       .from("subscriptions")
       .select("company_id")
@@ -35,9 +33,7 @@ export async function syncSubscriptionToDb(
   }
 
   if (!companyId) {
-    console.error(
-      `[stripe sync] No company_id for subscription ${subscription.id}; skipping.`,
-    );
+    console.error(`[billing sync] No company_id for subscription ${subscription.id}; skipping.`);
     return;
   }
 
@@ -60,11 +56,8 @@ export async function syncSubscriptionToDb(
     : null;
 
   const customerId =
-    typeof subscription.customer === "string"
-      ? subscription.customer
-      : subscription.customer.id;
+    typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
 
-  // 1. subscriptions table (full detail, owner-readable only)
   const { error: subErr } = await supabase.from("subscriptions").upsert(
     {
       company_id: companyId,
@@ -81,7 +74,6 @@ export async function syncSubscriptionToDb(
   );
   if (subErr) throw new Error(`subscriptions upsert failed: ${subErr.message}`);
 
-  // 2. companies table (coarse gate fields only)
   const { error: coErr } = await supabase
     .from("companies")
     .update({
@@ -93,18 +85,14 @@ export async function syncSubscriptionToDb(
   if (coErr) throw new Error(`companies update failed: ${coErr.message}`);
 
   console.log(
-    `[stripe sync] company=${companyId} sub=${subscription.id} status=${subscription.status} plan=${plan} limit=${employeeLimit}`,
+    `[billing sync] company=${companyId} sub=${subscription.id} status=${subscription.status} plan=${plan} limit=${employeeLimit}`,
   );
 }
 
-/**
- * Handle a fully-deleted subscription (customer.subscription.deleted).
- */
-export async function markSubscriptionCancelled(
-  subscription: Stripe.Subscription,
-): Promise<void> {
-  const supabase = getSupabaseAdmin();
-  let companyId = subscription.metadata?.company_id ?? null;
+/** customer.subscription.deleted */
+export async function markSubscriptionCancelled(subscription: Stripe.Subscription): Promise<void> {
+  const supabase = getBillingSupabaseAdmin();
+  let companyId: string | null = subscription.metadata?.company_id ?? null;
   if (!companyId) {
     const { data: existing } = await supabase
       .from("subscriptions")
@@ -117,10 +105,7 @@ export async function markSubscriptionCancelled(
 
   await supabase
     .from("subscriptions")
-    .update({
-      status: "canceled",
-      cancel_at_period_end: false,
-    })
+    .update({ status: "canceled", cancel_at_period_end: false })
     .eq("company_id", companyId);
 
   await supabase
@@ -128,5 +113,5 @@ export async function markSubscriptionCancelled(
     .update({ subscription_status: "cancelled", employee_limit: 0 })
     .eq("id", companyId);
 
-  console.log(`[stripe sync] company=${companyId} sub=${subscription.id} CANCELLED`);
+  console.log(`[billing sync] company=${companyId} sub=${subscription.id} CANCELLED`);
 }

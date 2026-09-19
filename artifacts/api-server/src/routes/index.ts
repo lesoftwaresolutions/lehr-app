@@ -1,62 +1,100 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import healthRouter from "./health";
+import billingRouter from "./billing";
 
-const router: IRouter = Router();
+const router = Router() as any;
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in Vercel environment
 // variables for the lehr-app-api-server project.
 // Do NOT use VITE_SUPABASE_URL — the VITE_ prefix is a Vite browser-only
 // build-time convention and is never available in Node.js.
-const supabaseUrl = process.env.SUPABASE_URL?.trim();
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+let supabaseAdminInstance: SupabaseClient | null = null;
 
-if (!supabaseUrl || !supabaseUrl.startsWith("https://")) {
-  throw new Error(
-    "[lehr-api] Missing or invalid SUPABASE_URL environment variable. " +
-    "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
-  );
+function getSupabaseAdmin(): SupabaseClient {
+  if (supabaseAdminInstance) {
+    return supabaseAdminInstance;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL?.trim();
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+
+  if (!supabaseUrl || !supabaseUrl.startsWith("https://")) {
+    throw new Error(
+      "[lehr-api] Missing or invalid SUPABASE_URL environment variable. " +
+      "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
+    );
+  }
+
+  if (!supabaseServiceKey || supabaseServiceKey.length < 100) {
+    throw new Error(
+      "[lehr-api] Missing or invalid SUPABASE_SERVICE_ROLE_KEY environment variable. " +
+      "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
+    );
+  }
+
+  supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  return supabaseAdminInstance;
 }
-
-if (!supabaseServiceKey || supabaseServiceKey.length < 100) {
-  throw new Error(
-    "[lehr-api] Missing or invalid SUPABASE_SERVICE_ROLE_KEY environment variable. " +
-    "Set it in Vercel → lehr-app-api-server → Settings → Environment Variables."
-  );
-}
-
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 router.use(healthRouter);
 
+// ─── Stripe billing (checkout + customer portal) ─────────────────────────────
+// The webhook is registered separately in app.ts (needs the raw body).
+router.use("/stripe", billingRouter);
+
 // ─── Auth middleware ──────────────────────────────────────────────────────────
-async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or malformed Authorization header." });
+async function requireAuth(req: any, res: any, next: any) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing or malformed Authorization header." });
+    }
+
+    const token = authHeader.slice(7);
+
+    let admin;
+    try {
+      admin = getSupabaseAdmin();
+    } catch (err: any) {
+      console.error("[lehr-api] Error initializing Supabase Admin in requireAuth:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+
+    const { data: { user }, error } = await admin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+    }
+
+    // Attach user to request for downstream handlers
+    (req as any).user = user;
+    next();
+    return;
+  } catch (err: any) {
+    console.error("[lehr-api] Unexpected error in requireAuth:", err);
+    return res.status(500).json({ error: "Authentication check failed: " + err.message });
   }
-
-  const token = authHeader.slice(7);
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-
-  if (error || !user) {
-    return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
-  }
-
-  // Attach user to request for downstream handlers
-  (req as any).user = user;
-  next();
 }
 
 // ─── POST /api/create-employee ────────────────────────────────────────────────
-router.post("/create-employee", requireAuth, async (req: Request, res: Response) => {
+router.post("/create-employee", requireAuth, async (req: any, res: any) => {
   const user = (req as any).user;
 
   try {
+    let admin;
+    try {
+      admin = getSupabaseAdmin();
+    } catch (err: any) {
+      console.error("[lehr-api] Error initializing Supabase Admin in /create-employee:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+
     const { full_name, email, pin_code, role, company_id } = req.body as {
       full_name?: string;
       email?: string;
@@ -82,9 +120,9 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
     }
 
     // 2. Verify the requester owns this company
-    const { data: company, error: companyError } = await supabaseAdmin
+    const { data: company, error: companyError } = await admin
       .from("companies")
-      .select("id")
+      .select("id, subscription_status, plan, employee_limit")
       .eq("id", company_id!)
       .eq("owner_id", user.id)
       .single();
@@ -93,8 +131,38 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
       return res.status(403).json({ error: "You do not have permission to add staff to this company." });
     }
 
+    // 2b. Require an active/trialing/past_due subscription to add staff.
+    if (!["active", "trialing", "past_due"].includes(company.subscription_status)) {
+      return res.status(402).json({
+        code: "NO_SUBSCRIPTION",
+        error: "Your subscription is not active. Visit Billing to choose or renew a plan.",
+      });
+    }
+
+    // 2c. Enforce the plan's employee limit (active employees only).
+    const limit = Number(company.employee_limit) || 0;
+    const { count: activeCount, error: countError } = await admin
+      .from("employees")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", company_id!)
+      .eq("status", "active");
+
+    if (countError) {
+      console.error("[lehr-api] Error counting employees:", countError);
+      return res.status(500).json({ error: "Could not verify your plan's employee limit." });
+    }
+
+    if ((activeCount ?? 0) >= limit) {
+      return res.status(403).json({
+        code: "EMPLOYEE_LIMIT",
+        error: `You've reached your ${company.plan ?? "current"} plan limit of ${limit} employees. Upgrade your plan on the Billing page to add more.`,
+        limit,
+        plan: company.plan,
+      });
+    }
+
     // 3. Check for duplicate PIN within the company
-    const { data: pinConflict } = await supabaseAdmin
+    const { data: pinConflict } = await admin
       .from("employees")
       .select("id, full_name")
       .eq("company_id", company_id!)
@@ -108,7 +176,7 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
     }
 
     // 4. Create Supabase Auth account for the employee
-    const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    const { data: authUser, error: authError } = await admin.auth.admin.createUser({
       email: email!,
       password: generateTempPassword(),
       email_confirm: true,
@@ -124,7 +192,7 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
     }
 
     // 5. Create the employee record linked to the Auth user
-    const { error: empError } = await supabaseAdmin.from("employees").insert([{
+    const { error: empError } = await admin.from("employees").insert([{
       full_name: full_name!.trim(),
       email: email!.trim().toLowerCase(),
       pin_code: pin_code!,
@@ -136,7 +204,7 @@ router.post("/create-employee", requireAuth, async (req: Request, res: Response)
 
     if (empError) {
       // Rollback: remove the Auth user if the DB record failed
-      await supabaseAdmin.auth.admin.deleteUser(authUser.user.id);
+      await admin.auth.admin.deleteUser(authUser.user.id);
 
       if (empError.code === "23505") {
         return res.status(409).json({ error: `PIN ${pin_code} is already in use. Please choose a different PIN.` });

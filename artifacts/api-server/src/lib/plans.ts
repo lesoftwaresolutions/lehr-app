@@ -3,7 +3,7 @@
 // to an employee limit is resolved HERE so the browser can never influence
 // pricing or limits.
 //
-// Price ids come from server-only env vars (set in Vercel):
+// Price ids come from server-only env vars:
 //   STRIPE_PRICE_MICRO, STRIPE_PRICE_GROWTH, STRIPE_PRICE_PROFESSIONAL
 
 export type PlanId = "micro" | "growth" | "professional";
@@ -26,11 +26,10 @@ export function priceIdForPlan(plan: PlanId): string {
     growth: process.env.STRIPE_PRICE_GROWTH,
     professional: process.env.STRIPE_PRICE_PROFESSIONAL,
   };
-  const priceId = env[plan];
+  const priceId = env[plan]?.trim();
   if (!priceId) {
     throw new Error(
-      `Missing Stripe price env var for plan "${plan}". ` +
-        `Set STRIPE_PRICE_${plan.toUpperCase()} in Vercel.`,
+      `Missing Stripe price env var for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()}.`,
     );
   }
   return priceId;
@@ -39,9 +38,9 @@ export function priceIdForPlan(plan: PlanId): string {
 export function planForPriceId(priceId: string | null | undefined): PlanId | null {
   if (!priceId) return null;
   const pairs: [PlanId, string | undefined][] = [
-    ["micro", process.env.STRIPE_PRICE_MICRO],
-    ["growth", process.env.STRIPE_PRICE_GROWTH],
-    ["professional", process.env.STRIPE_PRICE_PROFESSIONAL],
+    ["micro", process.env.STRIPE_PRICE_MICRO?.trim()],
+    ["growth", process.env.STRIPE_PRICE_GROWTH?.trim()],
+    ["professional", process.env.STRIPE_PRICE_PROFESSIONAL?.trim()],
   ];
   for (const [plan, id] of pairs) {
     if (id && id === priceId) return plan;
@@ -49,7 +48,7 @@ export function planForPriceId(priceId: string | null | undefined): PlanId | nul
   return null;
 }
 
-// Stripe subscription.status -> value stored in companies.subscription_status
+// Stripe subscription.status -> companies.subscription_status
 // (constrained by companies_subscription_status_check in the migration).
 export function mapStripeStatus(stripeStatus: string): string {
   switch (stripeStatus) {
@@ -68,10 +67,6 @@ export function mapStripeStatus(stripeStatus: string): string {
   }
 }
 
-// Statuses that grant access to the product (used by the client gate too, kept
-// in sync there). past_due keeps access with a warning banner.
-export const ACCESS_STATUSES = new Set([
-  "trialing",
-  "active",
-  "past_due",
-]);
+// Statuses that may use the product / add staff. Keep in sync with the
+// client-side gate in artifacts/lehr/src/lib/plans.ts.
+export const ACCESS_STATUSES = new Set(["trialing", "active", "past_due"]);

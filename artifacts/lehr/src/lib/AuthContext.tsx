@@ -14,6 +14,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
+    if (localStorage.getItem("mock_mode") === "true") {
+      setSession({
+        access_token: "mock-token",
+        token_type: "bearer",
+        expires_in: 3600,
+        refresh_token: "mock-refresh",
+        user: {
+          id: "mock-user-id",
+          aud: "authenticated",
+          role: "authenticated",
+          email: "manager@example.com",
+          user_metadata: { full_name: "Mock Manager" },
+          app_metadata: {},
+          identities: [],
+          created_at: new Date().toISOString(),
+        }
+      } as any);
+      setAuthReady(true);
+      return;
+    }
+
     // getSession() reads from localStorage — synchronous-ish, no network needed.
     // This sets authReady to true almost instantly on page load.
     supabase.auth.getSession().then(({ data }) => {
