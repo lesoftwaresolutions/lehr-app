@@ -1,7 +1,10 @@
 import React from "react";
+import { Link } from "wouter";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
+import { useAuth } from "@/lib/AuthContext";
+import { isUnlimited } from "@/lib/plans";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +18,8 @@ import { Loader2 } from "lucide-react";
 
 // ─── API client ────────────────────────────────────────────────────────────────
 // Always call /api/create-employee relative to the current origin.
-// vercel.json rewrites /api/* → the API server, so no hardcoded URL is needed.
+// /api/create-employee.ts is a Vercel serverless function in this same project,
+// so no hardcoded URL or rewrite is needed.
 // This works in dev (Vite proxy), staging, and production without any env var.
 async function createEmployee(payload: {
   full_name: string;
@@ -51,7 +55,11 @@ async function createEmployee(payload: {
   const data = await res.json();
 
   if (!res.ok) {
-    throw new Error(data.error ?? `Request failed with status ${res.status}`);
+    const err = new Error(data.error ?? `Request failed with status ${res.status}`) as Error & {
+      code?: string;
+    };
+    err.code = data.code;
+    throw err;
   }
 }
 
@@ -84,8 +92,14 @@ const EMPTY_FORM: FormData = {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 export default function StaffPage() {
-  const { activeCompany } = useCompany();
+  const { activeCompany, companies } = useCompany();
+  const { session } = useAuth();
   const { toast } = useToast();
+  // Plan limits are counted in TOTAL across every company this login owns.
+  const userId = session?.user?.id ?? null;
+  const ownedKey = companies.filter((c) => c.owner_id === userId).map((c) => c.id).join(",");
+  const ownedCount = ownedKey ? ownedKey.split(",").length : 0;
+  const [accountActive, setAccountActive] = React.useState<number | null>(null);
 
   const [staff, setStaff] = React.useState<StaffMember[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -94,6 +108,23 @@ export default function StaffPage() {
   const [editingStaff, setEditingStaff] = React.useState<StaffMember | null>(null);
   const [formData, setFormData] = React.useState<FormData>(EMPTY_FORM);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const [upgradeError, setUpgradeError] = React.useState<string | null>(null);
+
+  const activeCount = accountActive ?? staff.filter((s) => s.status === "active").length;
+  const limit = activeCompany?.employee_limit ?? 0;
+  const limitReached = limit > 0 && activeCount >= limit;
+
+  React.useEffect(() => {
+    if (!ownedKey) { setAccountActive(null); return; }
+    let cancelled = false;
+    supabase
+      .from("employees")
+      .select("id", { count: "exact", head: true })
+      .in("company_id", ownedKey.split(","))
+      .eq("status", "active")
+      .then(({ count, error }) => { if (!cancelled) setAccountActive(error ? null : count ?? null); });
+    return () => { cancelled = true; };
+  }, [ownedKey, staff]);
 
   // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchStaff = React.useCallback(async () => {
@@ -234,6 +265,10 @@ export default function StaffPage() {
       fetchStaff();
     } catch (err: any) {
       setFormError(err.message ?? "Something went wrong. Please try again.");
+      if (err?.code === "EMPLOYEE_LIMIT" || err?.code === "NO_SUBSCRIPTION") {
+        setUpgradeError(err.message);
+        closeDialog();
+      }
     } finally {
       setIsSaving(false);
     }
@@ -263,12 +298,36 @@ export default function StaffPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-xl font-semibold">Team Members</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{activeCompany?.name}</p>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {activeCompany?.name}
+            {limit > 0 && (
+              <span className={limitReached ? "text-amber-600 font-medium" : ""}>
+                {" "}· {isUnlimited(limit) ? `${activeCount} active (unlimited)` : `${activeCount} / ${limit} active${ownedCount > 1 ? ` across all ${ownedCount} companies` : ""}`}
+              </span>
+            )}
+          </p>
         </div>
-        <Button data-testid="button-add-staff" onClick={openAdd}>
+        <Button
+          data-testid="button-add-staff"
+          onClick={openAdd}
+          disabled={limitReached}
+          title={limitReached ? "You've reached your plan's employee limit" : undefined}
+        >
           Add Staff
         </Button>
       </div>
+
+      {(limitReached || upgradeError) && (
+        <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center justify-between gap-4">
+          <span>
+            {upgradeError ??
+              `You've reached your ${activeCompany?.plan ?? "current"} plan limit of ${limit} employees${ownedCount > 1 ? " across all your companies" : ""}.`}
+          </span>
+          <Link href="/dashboard/billing" className="font-semibold underline shrink-0">
+            Go to Billing
+          </Link>
+        </div>
+      )}
 
       {/* ── Add / Edit dialog ─────────────────────────────────────────────── */}
       <Dialog open={isDialogOpen} onOpenChange={open => { if (!open) closeDialog(); }}>

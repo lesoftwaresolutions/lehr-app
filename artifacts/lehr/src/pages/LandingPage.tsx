@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, Clock, Calendar, Users, Building, MessageSquare } from "lucide-react";
+import { CheckCircle2, Clock, Calendar, Users, Building, MessageSquare, FileText } from "lucide-react";
 
 export default function LandingPage() {
   return (
@@ -13,6 +13,15 @@ export default function LandingPage() {
           <span className="font-bold text-xl text-primary tracking-tight">LEHR</span>
         </div>
         <div className="flex items-center gap-4">
+          <a
+            href="/LEHR-App-Guide.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+            data-testid="link-guide-header"
+          >
+            <FileText size={16} /> User Guide
+          </a>
           <Link href="/auth" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors" data-testid="link-login">
             Log In
           </Link>
@@ -37,7 +46,17 @@ export default function LandingPage() {
                 Get Started for Free
               </Button>
             </Link>
-            <p className="text-sm text-slate-500 sm:hidden">No credit card required</p>
+            <a
+              href="/LEHR-App-Guide.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="button-hero-guide"
+            >
+              <Button size="lg" variant="outline" className="text-lg px-8 py-6 rounded-full w-full sm:w-auto gap-2">
+                <FileText size={20} /> View the User Guide (PDF)
+              </Button>
+            </a>
+            <p className="text-sm text-slate-500 sm:hidden">14-day free trial · card required · £0 today</p>
           </div>
         </section>
 
@@ -75,6 +94,9 @@ export default function LandingPage() {
           <div className="text-center mb-16">
             <h2 className="text-3xl font-bold text-slate-900 mb-4">Simple, straightforward pricing</h2>
             <p className="text-lg text-slate-600">No hidden fees. No long-term contracts. Cancel anytime.</p>
+            <p className="text-base text-slate-700 font-medium mt-4 max-w-2xl mx-auto" data-testid="landing-trial-terms">
+              14-day free trial. Your card is required today. You will pay £0 today and be charged the monthly price after 14 days unless you cancel.
+            </p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 items-start">
@@ -99,7 +121,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-micro">
+                <Link href="/auth?plan=micro" className="w-full" data-testid="button-pricing-micro">
                   <Button variant="outline" className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
@@ -129,7 +151,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-growth">
+                <Link href="/auth?plan=growth" className="w-full" data-testid="button-pricing-growth">
                   <Button className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
@@ -156,7 +178,7 @@ export default function LandingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                <Link href="/auth" className="w-full" data-testid="button-pricing-pro">
+                <Link href="/auth?plan=professional" className="w-full" data-testid="button-pricing-pro">
                   <Button variant="outline" className="w-full font-semibold">Get Started</Button>
                 </Link>
               </CardFooter>
@@ -177,8 +199,17 @@ export default function LandingPage() {
             <img src="/logo.jpeg" alt="LEHR Logo" className="h-8 object-contain rounded opacity-90" />
             <span className="font-bold text-xl text-white tracking-tight">LEHR</span>
           </div>
-          <div className="text-sm">
-            &copy; {new Date().getFullYear()} LeSoftware Solutions. All rights reserved.
+          <div className="text-sm flex flex-col items-center md:items-end gap-2">
+            <a
+              href="/LEHR-App-Guide.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-white underline-offset-4 hover:underline"
+              data-testid="link-guide-footer"
+            >
+              LEHR User Guide (PDF)
+            </a>
+            <span>&copy; {new Date().getFullYear()} LeSoftware Solutions. All rights reserved.</span>
           </div>
         </div>
       </footer>

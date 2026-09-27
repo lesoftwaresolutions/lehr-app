@@ -9,9 +9,11 @@
   },
   "private": true,
   "devDependencies": {
-    "@esbuild/darwin-arm64": "^0.28.0",
+    "@esbuild/darwin-arm64": "0.27.3",
     "@rollup/rollup-darwin-arm64": "^4.61.1",
+    "@tailwindcss/oxide-darwin-arm64": "4.3.0",
     "@types/node": "catalog:",
+    "lightningcss-darwin-arm64": "1.32.0",
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"
   },

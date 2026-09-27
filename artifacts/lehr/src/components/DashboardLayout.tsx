@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calendar, Clock, Users, FileText, LogOut, LayoutDashboard, Menu, ChevronDown, Building2, Plus, Check } from "lucide-react";
+import { Calendar, Clock, Users, FileText, LogOut, LayoutDashboard, Menu, ChevronDown, Building2, Plus, Check, CreditCard, AlertTriangle } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 type SidebarStats = { totalStaff: number; clockedIn: number; hoursToday: number };
@@ -104,6 +104,7 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
     { icon: Clock, label: "Time Logs", href: "/dashboard/time" },
     { icon: Users, label: "Staff", href: "/dashboard/staff" },
     { icon: FileText, label: "Leave", href: "/dashboard/leave" },
+    { icon: CreditCard, label: "Billing", href: "/dashboard/billing" },
   ];
 
   const SidebarContent = () => (
@@ -262,6 +263,18 @@ export function DashboardLayout({ children, title }: { children: ReactNode; titl
             {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
           </div>
         </header>
+
+        {activeCompany?.subscription_status === "past_due" && (
+          <div className="bg-red-50 border-b border-red-200 px-4 md:px-8 py-2.5 flex items-center gap-2 text-sm text-red-800">
+            <AlertTriangle size={16} className="shrink-0" />
+            <span className="flex-1">
+              Your last payment failed. Update your payment method to avoid losing access.
+            </span>
+            <Link href="/dashboard/billing" className="font-semibold underline shrink-0">
+              Fix now
+            </Link>
+          </div>
+        )}
 
         <div className="p-4 md:p-8 flex-1">
           {children}

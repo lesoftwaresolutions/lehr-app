@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/AuthContext";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { AuthGuard } from "@/components/AuthGuard";
+import { SubscriptionGate } from "@/components/SubscriptionGate";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Lazy-load every page — only the visited route's chunk is downloaded.
@@ -15,6 +16,9 @@ const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"));
 const CompanyKioskPage  = lazy(() => import("@/pages/CompanyKioskPage"));
 const CompanyPickerPage = lazy(() => import("@/pages/CompanyPickerPage"));
 const DashboardPage     = lazy(() => import("@/pages/DashboardPage"));
+const ChoosePlanPage    = lazy(() => import("@/pages/ChoosePlanPage"));
+const CheckoutSuccessPage = lazy(() => import("@/pages/CheckoutSuccessPage"));
+const BillingPage       = lazy(() => import("@/pages/BillingPage"));
 const StaffPage         = lazy(() => import("@/pages/StaffPage"));
 const RotaPage          = lazy(() => import("@/pages/RotaPage"));
 const TimePage          = lazy(() => import("@/pages/TimePage"));
@@ -41,13 +45,25 @@ function ProtectedApp() {
       <AuthGuard>
         <Suspense fallback={<PageLoader />}>
           <Switch>
-            <Route path="/pick-company"    component={CompanyPickerPage} />
-            <Route path="/dashboard"       component={DashboardPage} />
-            <Route path="/dashboard/staff" component={StaffPage} />
-            <Route path="/dashboard/rota"  component={RotaPage} />
-            <Route path="/dashboard/time"  component={TimePage} />
-            <Route path="/dashboard/leave" component={LeavePage} />
-            <Route component={NotFound} />
+            {/* Auth + company required, but NOT an active subscription */}
+            <Route path="/pick-company"   component={CompanyPickerPage} />
+            <Route path="/choose-plan"    component={ChoosePlanPage} />
+            <Route path="/billing/success" component={CheckoutSuccessPage} />
+
+            {/* Everything below additionally requires an active subscription */}
+            <Route>
+              <SubscriptionGate>
+                <Switch>
+                  <Route path="/dashboard"         component={DashboardPage} />
+                  <Route path="/dashboard/staff"   component={StaffPage} />
+                  <Route path="/dashboard/rota"    component={RotaPage} />
+                  <Route path="/dashboard/time"    component={TimePage} />
+                  <Route path="/dashboard/leave"   component={LeavePage} />
+                  <Route path="/dashboard/billing" component={BillingPage} />
+                  <Route component={NotFound} />
+                </Switch>
+              </SubscriptionGate>
+            </Route>
           </Switch>
         </Suspense>
       </AuthGuard>

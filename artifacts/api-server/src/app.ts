@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import { pinoHttp } from "pino-http";
 import router from "./routes";
+import { stripeWebhookHandler } from "./routes/stripeWebhook";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
@@ -49,6 +50,10 @@ app.use(
     credentials: true,
   }),
 );
+
+// Stripe webhook: needs the RAW body for signature verification, so it must be
+// registered before express.json() consumes the stream.
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

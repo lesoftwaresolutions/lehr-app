@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import healthRouter from "./health";
+import billingRouter from "./billing";
 
 const router = Router() as any;
 
@@ -42,6 +43,10 @@ function getSupabaseAdmin(): SupabaseClient {
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 router.use(healthRouter);
+
+// ─── Stripe billing (checkout + customer portal) ─────────────────────────────
+// The webhook is registered separately in app.ts (needs the raw body).
+router.use("/stripe", billingRouter);
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 async function requireAuth(req: any, res: any, next: any) {
@@ -124,6 +129,52 @@ router.post("/create-employee", requireAuth, async (req: any, res: any) => {
 
     if (companyError || !company) {
       return res.status(403).json({ error: "You do not have permission to add staff to this company." });
+    }
+
+    // 2b. Billing is per ACCOUNT. The subscription row (written only by the Stripe
+    // webhook) is authoritative; require it to be active/trialing/past_due.
+    const { data: sub } = await admin
+      .from("subscriptions")
+      .select("app_status, plan, employee_limit")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!sub || !["active", "trialing", "past_due"].includes(sub.app_status)) {
+      return res.status(402).json({
+        code: "NO_SUBSCRIPTION",
+        error: "Your subscription is not active. Visit Billing to choose or renew a plan.",
+      });
+    }
+
+    // 2c. Enforce the plan's employee limit: active employees counted in TOTAL
+    // across every company this account owns.
+    const limit = Number(sub.employee_limit) || 0;
+    const { data: ownedCompanies, error: ownedError } = await admin
+      .from("companies")
+      .select("id")
+      .eq("owner_id", user.id);
+    const ownedIds = (ownedCompanies ?? []).map((c: { id: string }) => c.id);
+
+    const { count: activeCount, error: countError } = ownedError
+      ? { count: null, error: ownedError }
+      : await admin
+          .from("employees")
+          .select("id", { count: "exact", head: true })
+          .in("company_id", ownedIds)
+          .eq("status", "active");
+
+    if (countError) {
+      console.error("[lehr-api] Error counting employees:", countError);
+      return res.status(500).json({ error: "Could not verify your plan's employee limit." });
+    }
+
+    if ((activeCount ?? 0) >= limit) {
+      return res.status(403).json({
+        code: "EMPLOYEE_LIMIT",
+        error: `You've reached your ${sub.plan ?? "current"} plan limit of ${limit} employees across all your companies. Upgrade your plan on the Billing page to add more.`,
+        limit,
+        plan: sub.plan,
+      });
     }
 
     // 3. Check for duplicate PIN within the company
