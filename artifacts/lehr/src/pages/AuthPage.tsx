@@ -296,7 +296,7 @@ export default function AuthPage() {
           <TabsContent value="signup" className="p-6 m-0">
             <CardHeader className="p-0 mb-6">
               <CardTitle>Start your free trial</CardTitle>
-              <CardDescription>Get your business organised in minutes. 14-day free trial — you won't be charged until it ends.</CardDescription>
+              <CardDescription>Get your business organised in minutes. After sign-up you'll choose a plan: 14-day free trial, card required, £0 today — charged monthly after 14 days unless you cancel.</CardDescription>
             </CardHeader>
             <div className="space-y-4">
               <div className="space-y-2">

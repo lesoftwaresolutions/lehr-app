@@ -122,7 +122,7 @@ router.post("/create-employee", requireAuth, async (req: any, res: any) => {
     // 2. Verify the requester owns this company
     const { data: company, error: companyError } = await admin
       .from("companies")
-      .select("id, subscription_status, plan, employee_limit")
+      .select("id")
       .eq("id", company_id!)
       .eq("owner_id", user.id)
       .single();
@@ -131,21 +131,37 @@ router.post("/create-employee", requireAuth, async (req: any, res: any) => {
       return res.status(403).json({ error: "You do not have permission to add staff to this company." });
     }
 
-    // 2b. Require an active/trialing/past_due subscription to add staff.
-    if (!["active", "trialing", "past_due"].includes(company.subscription_status)) {
+    // 2b. Billing is per ACCOUNT. The subscription row (written only by the Stripe
+    // webhook) is authoritative; require it to be active/trialing/past_due.
+    const { data: sub } = await admin
+      .from("subscriptions")
+      .select("app_status, plan, employee_limit")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!sub || !["active", "trialing", "past_due"].includes(sub.app_status)) {
       return res.status(402).json({
         code: "NO_SUBSCRIPTION",
         error: "Your subscription is not active. Visit Billing to choose or renew a plan.",
       });
     }
 
-    // 2c. Enforce the plan's employee limit (active employees only).
-    const limit = Number(company.employee_limit) || 0;
-    const { count: activeCount, error: countError } = await admin
-      .from("employees")
-      .select("id", { count: "exact", head: true })
-      .eq("company_id", company_id!)
-      .eq("status", "active");
+    // 2c. Enforce the plan's employee limit: active employees counted in TOTAL
+    // across every company this account owns.
+    const limit = Number(sub.employee_limit) || 0;
+    const { data: ownedCompanies, error: ownedError } = await admin
+      .from("companies")
+      .select("id")
+      .eq("owner_id", user.id);
+    const ownedIds = (ownedCompanies ?? []).map((c: { id: string }) => c.id);
+
+    const { count: activeCount, error: countError } = ownedError
+      ? { count: null, error: ownedError }
+      : await admin
+          .from("employees")
+          .select("id", { count: "exact", head: true })
+          .in("company_id", ownedIds)
+          .eq("status", "active");
 
     if (countError) {
       console.error("[lehr-api] Error counting employees:", countError);
@@ -155,9 +171,9 @@ router.post("/create-employee", requireAuth, async (req: any, res: any) => {
     if ((activeCount ?? 0) >= limit) {
       return res.status(403).json({
         code: "EMPLOYEE_LIMIT",
-        error: `You've reached your ${company.plan ?? "current"} plan limit of ${limit} employees. Upgrade your plan on the Billing page to add more.`,
+        error: `You've reached your ${sub.plan ?? "current"} plan limit of ${limit} employees across all your companies. Upgrade your plan on the Billing page to add more.`,
         limit,
-        plan: company.plan,
+        plan: sub.plan,
       });
     }
 

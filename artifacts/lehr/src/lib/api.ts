@@ -41,15 +41,17 @@ export async function apiPost<T = any>(path: string, body: unknown): Promise<T> 
   return data as T;
 }
 
-export function startCheckout(companyId: string, plan: string) {
-  return apiPost<{ url: string }>("/api/stripe/create-checkout-session", {
-    company_id: companyId,
-    plan,
-  });
+// Billing is per ACCOUNT (the logged-in owner): one plan covers all their companies.
+export function startCheckout(plan: string) {
+  return apiPost<{ url: string }>("/api/stripe/create-checkout-session", { plan });
 }
 
-export function openBillingPortal(companyId: string) {
-  return apiPost<{ url: string }>("/api/stripe/create-portal-session", {
-    company_id: companyId,
-  });
+export function openBillingPortal() {
+  return apiPost<{ url: string }>("/api/stripe/create-portal-session", {});
+}
+
+// Asks Stripe directly for the account's subscription. Used as a fallback when the
+// webhook is late or was missed.
+export function syncSubscription() {
+  return apiPost<{ status: string; synced: boolean }>("/api/stripe/sync-subscription", {});
 }

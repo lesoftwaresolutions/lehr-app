@@ -10,14 +10,38 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 let stripeInstance: Stripe | null = null;
 
+/**
+ * Sandbox and Live must never mix: the Vercel PRODUCTION deployment may only use a
+ * live key, and every other environment (preview, local) may only use a test key.
+ * Returns a problem description when the key does not fit the environment.
+ */
+export function stripeModeProblem(env: NodeJS.ProcessEnv = process.env): string | null {
+  const key = env.STRIPE_SECRET_KEY?.trim() ?? "";
+  const isLive = key.startsWith("sk_live_") || key.startsWith("rk_live_");
+  const isTest = key.startsWith("sk_test_") || key.startsWith("rk_test_");
+  if (!isLive && !isTest) return "STRIPE_SECRET_KEY is not a recognised Stripe secret key.";
+  const production = env.VERCEL_ENV ? env.VERCEL_ENV === "production" : env.NODE_ENV === "production";
+  if (production && !isLive) return "Production must use a LIVE Stripe key, not a test key.";
+  if (!production && isLive) return "A LIVE Stripe key is only allowed in the production environment.";
+  return null;
+}
+
 export function getStripe(): Stripe {
   if (stripeInstance) return stripeInstance;
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) {
     throw new Error("Server misconfigured: STRIPE_SECRET_KEY is not set.");
   }
+  const problem = stripeModeProblem();
+  if (problem) throw new Error(`Server misconfigured: ${problem}`);
   stripeInstance = new Stripe(key, { appInfo: { name: "LEHR" } });
   return stripeInstance;
+}
+
+/** True when the configured secret key is a LIVE-mode key (sk_live_ / rk_live_). */
+export function stripeKeyIsLive(): boolean {
+  const key = process.env.STRIPE_SECRET_KEY?.trim() ?? "";
+  return key.startsWith("sk_live_") || key.startsWith("rk_live_");
 }
 
 export function getWebhookSecret(): string {

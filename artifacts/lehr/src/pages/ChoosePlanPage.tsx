@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/lib/AuthContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { startCheckout } from "@/lib/api";
-import { PLANS, PLAN_ORDER, isPlanId, type PlanId } from "@/lib/plans";
+import { StaffBillingNotice } from "@/components/StaffBillingNotice";
+import {
+  PLANS,
+  PLAN_ORDER,
+  TRIAL_HEADLINE,
+  hasDashboardAccess,
+  isPlanId,
+  isStaffOnly,
+  trialTerms,
+  type PlanId,
+} from "@/lib/plans";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -21,9 +32,13 @@ const FEATURES = [
 
 export default function ChoosePlanPage() {
   const [, setLocation] = useLocation();
-  const { activeCompany } = useCompany();
+  const { session } = useAuth();
+  const { activeCompany, companies, refreshCompanies } = useCompany();
   const { toast } = useToast();
   const [busyPlan, setBusyPlan] = useState<PlanId | null>(null);
+  const staffOnly = isStaffOnly(companies, session?.user?.id ?? null);
+  // Owners who already have access (including the developer account) never need Checkout.
+  const alreadyHasAccess = hasDashboardAccess(activeCompany?.subscription_status);
 
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const preselected = params.get("plan");
@@ -38,13 +53,22 @@ export default function ChoosePlanPage() {
     }
   }, [wasCancelled, toast]);
 
+  useEffect(() => {
+    if (alreadyHasAccess && !staffOnly) setLocation("/dashboard");
+  }, [alreadyHasAccess, staffOnly, setLocation]);
+
   const handleChoose = async (plan: PlanId) => {
-    if (!activeCompany) return;
     setBusyPlan(plan);
     try {
-      const { url } = await startCheckout(activeCompany.id, plan);
+      const { url } = await startCheckout(plan);
       window.location.href = url; // hand off to Stripe Checkout
     } catch (err: any) {
+      // The account already has access (e.g. the subscription was just confirmed).
+      if (err?.code === "ALREADY_SUBSCRIBED" || err?.code === "DEVELOPER_ACCOUNT") {
+        await refreshCompanies();
+        setLocation("/dashboard");
+        return;
+      }
       toast({
         title: "Could not start checkout",
         description: err?.message ?? "Please try again.",
@@ -58,6 +82,8 @@ export default function ChoosePlanPage() {
     await supabase.auth.signOut();
     setLocation("/");
   };
+
+  if (staffOnly) return <StaffBillingNotice />;
 
   return (
     <div className="min-h-screen bg-slate-50 py-16 px-6">
@@ -75,8 +101,11 @@ export default function ChoosePlanPage() {
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-slate-900 mb-3">Choose your plan</h1>
           <p className="text-slate-600">
-            {activeCompany ? <><span className="font-medium">{activeCompany.name}</span> — </> : null}
-            start with a 14-day free trial. Cancel anytime, no charge during the trial.
+            {session?.user?.email ? <><span className="font-medium">{session.user.email}</span> — </> : null}
+            one plan covers all your companies.
+          </p>
+          <p className="text-slate-700 font-medium mt-3 max-w-2xl mx-auto" data-testid="trial-headline">
+            {TRIAL_HEADLINE}
           </p>
         </div>
 
@@ -124,8 +153,11 @@ export default function ChoosePlanPage() {
                     data-testid={`choose-plan-${id}`}
                   >
                     {busyPlan === id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Start 14-day trial
+                    Start 14-day free trial
                   </Button>
+                  <p className="text-xs text-slate-500 text-center mt-3" data-testid={`trial-terms-${id}`}>
+                    {trialTerms(plan)}
+                  </p>
                 </CardContent>
               </Card>
             );

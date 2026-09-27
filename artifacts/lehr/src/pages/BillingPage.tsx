@@ -3,8 +3,10 @@ import { useLocation } from "wouter";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
+import { useAuth } from "@/lib/AuthContext";
 import { openBillingPortal } from "@/lib/api";
-import { PLANS, type PlanId } from "@/lib/plans";
+import { PLANS, isStaffOnly, isUnlimited, type PlanId } from "@/lib/plans";
+import { StaffBillingNotice } from "@/components/StaffBillingNotice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +19,7 @@ interface SubRow {
   current_period_end: string | null;
   trial_end: string | null;
   cancel_at_period_end: boolean;
+  billing_exempt: boolean;
 }
 
 const STATUS_LABEL: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
@@ -38,42 +41,50 @@ function fmtDate(iso: string | null) {
 
 export default function BillingPage() {
   const [, setLocation] = useLocation();
-  const { activeCompany } = useCompany();
+  const { activeCompany, companies } = useCompany();
+  const { session } = useAuth();
   const { toast } = useToast();
+  // Billing is per account: staff are counted across every company this login owns.
+  const userId = session?.user?.id ?? null;
+  const ownedIds = companies.filter((c) => c.owner_id === userId).map((c) => c.id);
+  const ownedKey = ownedIds.join(",");
+  const staffOnly = isStaffOnly(companies, userId);
   const [sub, setSub] = useState<SubRow | null>(null);
   const [activeStaff, setActiveStaff] = useState(0);
   const [loading, setLoading] = useState(true);
   const [portalBusy, setPortalBusy] = useState(false);
 
   const load = useCallback(async () => {
-    if (!activeCompany) return;
+    if (!activeCompany || !userId || staffOnly) return;
     setLoading(true);
+    const ids = ownedKey ? ownedKey.split(",") : [];
     const [subRes, staffRes] = await Promise.all([
       supabase
         .from("subscriptions")
-        .select("plan, status, current_period_end, trial_end, cancel_at_period_end")
-        .eq("company_id", activeCompany.id)
+        .select("plan, status, current_period_end, trial_end, cancel_at_period_end, billing_exempt")
+        .eq("user_id", userId)
         .maybeSingle(),
-      supabase
-        .from("employees")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", activeCompany.id)
-        .eq("status", "active"),
+      ids.length
+        ? supabase
+            .from("employees")
+            .select("id", { count: "exact", head: true })
+            .in("company_id", ids)
+            .eq("status", "active")
+        : Promise.resolve({ count: 0 }),
     ]);
     setSub((subRes.data as SubRow) ?? null);
-    setActiveStaff(staffRes.count ?? 0);
+    setActiveStaff((staffRes as { count: number | null }).count ?? 0);
     setLoading(false);
-  }, [activeCompany]);
+  }, [activeCompany, userId, ownedKey, staffOnly]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const handlePortal = async () => {
-    if (!activeCompany) return;
     setPortalBusy(true);
     try {
-      const { url } = await openBillingPortal(activeCompany.id);
+      const { url } = await openBillingPortal();
       window.location.href = url;
     } catch (err: any) {
       toast({
@@ -91,6 +102,15 @@ export default function BillingPage() {
   const limit = activeCompany?.employee_limit ?? 0;
   const statusMeta = STATUS_LABEL[status] ?? { label: status, variant: "outline" as const };
   const hasStripeCustomer = !!sub; // a subscriptions row means a Stripe customer exists
+  const isDeveloper = !!sub?.billing_exempt;
+
+  if (staffOnly) {
+    return (
+      <DashboardLayout title="Billing">
+        <StaffBillingNotice fullPage={false} />
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Billing">
@@ -101,6 +121,19 @@ export default function BillingPage() {
           </div>
         ) : (
           <>
+            {isDeveloper ? (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                  <CardTitle>Developer account</CardTitle>
+                  <Badge>Full access</Badge>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600">
+                    This account has full access to every feature and company with no plan, payment or employee limit.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle>Current plan</CardTitle>
@@ -161,6 +194,7 @@ export default function BillingPage() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
             <Card>
               <CardHeader>
@@ -171,7 +205,11 @@ export default function BillingPage() {
               <CardContent>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-bold text-slate-900">{activeStaff}</span>
-                  <span className="text-slate-500">/ {limit || "—"} active employees</span>
+                  <span className="text-slate-500">
+                    {isUnlimited(limit)
+                      ? "active employees (unlimited)"
+                      : `/ ${limit || "—"} active employees across ${ownedIds.length || 1} ${ownedIds.length === 1 ? "company" : "companies"}`}
+                  </span>
                 </div>
                 {limit > 0 && activeStaff >= limit && (
                   <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-3">

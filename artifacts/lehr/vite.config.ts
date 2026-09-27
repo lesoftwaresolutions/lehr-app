@@ -18,6 +18,14 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+// The frontend calls the API with relative URLs ("/api/..."). On Replit a router
+// puts both on one origin; locally the dev server proxies /api to the API server.
+const apiProxy = {
+  "/api": {
+    target: process.env.API_PROXY_TARGET ?? "http://localhost:8080",
+  },
+};
+
 const basePath = process.env.BASE_PATH;
 
 if (!basePath) {
@@ -63,6 +71,7 @@ export default defineConfig({
     strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
+    proxy: apiProxy,
     fs: {
       strict: true,
     },
@@ -71,5 +80,6 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    proxy: apiProxy,
   },
 });

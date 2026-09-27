@@ -3,6 +3,8 @@ import { Link } from "wouter";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
+import { useAuth } from "@/lib/AuthContext";
+import { isUnlimited } from "@/lib/plans";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -90,8 +92,14 @@ const EMPTY_FORM: FormData = {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 export default function StaffPage() {
-  const { activeCompany } = useCompany();
+  const { activeCompany, companies } = useCompany();
+  const { session } = useAuth();
   const { toast } = useToast();
+  // Plan limits are counted in TOTAL across every company this login owns.
+  const userId = session?.user?.id ?? null;
+  const ownedKey = companies.filter((c) => c.owner_id === userId).map((c) => c.id).join(",");
+  const ownedCount = ownedKey ? ownedKey.split(",").length : 0;
+  const [accountActive, setAccountActive] = React.useState<number | null>(null);
 
   const [staff, setStaff] = React.useState<StaffMember[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -102,9 +110,21 @@ export default function StaffPage() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [upgradeError, setUpgradeError] = React.useState<string | null>(null);
 
-  const activeCount = staff.filter((s) => s.status === "active").length;
+  const activeCount = accountActive ?? staff.filter((s) => s.status === "active").length;
   const limit = activeCompany?.employee_limit ?? 0;
   const limitReached = limit > 0 && activeCount >= limit;
+
+  React.useEffect(() => {
+    if (!ownedKey) { setAccountActive(null); return; }
+    let cancelled = false;
+    supabase
+      .from("employees")
+      .select("id", { count: "exact", head: true })
+      .in("company_id", ownedKey.split(","))
+      .eq("status", "active")
+      .then(({ count, error }) => { if (!cancelled) setAccountActive(error ? null : count ?? null); });
+    return () => { cancelled = true; };
+  }, [ownedKey, staff]);
 
   // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchStaff = React.useCallback(async () => {
@@ -282,7 +302,7 @@ export default function StaffPage() {
             {activeCompany?.name}
             {limit > 0 && (
               <span className={limitReached ? "text-amber-600 font-medium" : ""}>
-                {" "}· {activeCount} / {limit} active
+                {" "}· {isUnlimited(limit) ? `${activeCount} active (unlimited)` : `${activeCount} / ${limit} active${ownedCount > 1 ? ` across all ${ownedCount} companies` : ""}`}
               </span>
             )}
           </p>
@@ -301,7 +321,7 @@ export default function StaffPage() {
         <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center justify-between gap-4">
           <span>
             {upgradeError ??
-              `You've reached your ${activeCompany?.plan ?? "current"} plan limit of ${limit} employees.`}
+              `You've reached your ${activeCompany?.plan ?? "current"} plan limit of ${limit} employees${ownedCount > 1 ? " across all your companies" : ""}.`}
           </span>
           <Link href="/dashboard/billing" className="font-semibold underline shrink-0">
             Go to Billing

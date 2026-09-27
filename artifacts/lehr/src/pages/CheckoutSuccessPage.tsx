@@ -3,12 +3,14 @@ import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabaseClient";
 import { useCompany } from "@/lib/CompanyContext";
 import { hasDashboardAccess } from "@/lib/plans";
+import { syncSubscription } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle2 } from "lucide-react";
 
-// Landing page after Stripe Checkout. The webhook is the source of truth, so we
-// poll companies.subscription_status until it flips to an access status, then
-// refresh the CompanyContext and go to the dashboard.
+// Landing page after Stripe Checkout. The webhook is the normal way the database
+// learns about the payment, so we poll companies.subscription_status until it
+// flips to an access status. If the webhook is late or was missed, we also ask
+// the API to sync straight from Stripe (at the start and again after a few tries).
 export default function CheckoutSuccessPage() {
   const [, setLocation] = useLocation();
   const { activeCompany, refreshCompanies } = useCompany();
@@ -21,6 +23,9 @@ export default function CheckoutSuccessPage() {
 
     const poll = async () => {
       tries.current += 1;
+      if (tries.current === 1 || tries.current === 4) {
+        await syncSubscription().catch(() => undefined);
+      }
       const { data } = await supabase
         .from("companies")
         .select("subscription_status")

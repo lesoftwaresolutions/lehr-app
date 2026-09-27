@@ -61,7 +61,7 @@ async function createCompanyFromSignupMetadata(userId: string): Promise<Company 
 }
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
-  const { session } = useAuth();
+  const { session, authReady } = useAuth();
   // Use a stable primitive (userId string or null) as the effect dependency.
   // This prevents the infinite loop caused by depending on the session object reference.
   const userId = session?.user?.id ?? null;
@@ -134,11 +134,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (restored) localStorage.setItem(STORAGE_KEY, restored.id);
 
     return list;
-  }, []); // stable — no external deps
+  // Depends on userId: with [] the callback kept the userId from the first render
+  // (null on a full page load, before the session is restored) and never fetched
+  // any companies, so reloads and the return from Stripe showed an empty picker.
+  }, [userId]);
 
   // Re-fetch only when the logged-in user actually changes.
   // No onAuthStateChange subscription here — AuthContext owns auth state.
   useEffect(() => {
+    // Until auth has resolved, stay in the initial loading state. Otherwise this
+    // provider reports "not loading, no company" for a moment and AuthGuard
+    // redirects every full page load (e.g. Stripe's return to /billing/success)
+    // to /pick-company before the company list has been fetched.
+    if (!authReady) return;
     if (userId) {
       setIsLoading(true);
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
@@ -148,9 +156,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       setActiveCompanyState(null);
       setIsLoading(false);
     }
-  // refreshCompanies is a stable useCallback — safe to omit from deps
+  // refreshCompanies only changes with userId, so it is safe to omit from deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId, authReady]);
 
   const setActiveCompany = (c: Company) => {
     setActiveCompanyState(c);

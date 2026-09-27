@@ -53,3 +53,24 @@ export const ACCESS_STATUSES: ReadonlySet<string> = new Set([
 export function hasDashboardAccess(status: string | null | undefined): boolean {
   return !!status && ACCESS_STATUSES.has(status);
 }
+
+// The developer account is stored with a very large employee limit.
+export const UNLIMITED_EMPLOYEES = 100000;
+export const isUnlimited = (limit: number) => limit >= UNLIMITED_EMPLOYEES;
+
+// ── Trial wording. Must match the Stripe Checkout configuration exactly:
+// 14 days free, card required up front, £0 due today, charged after the trial.
+export const TRIAL_HEADLINE =
+  "14-day free trial. Your card is required today. You will pay £0 today and be charged after 14 days unless you cancel.";
+
+export function trialTerms(plan: { priceLabel: string }): string {
+  return `14-day free trial. Your card is required today. You will pay £0 today and be charged ${plan.priceLabel} after 14 days unless you cancel.`;
+}
+
+export const STAFF_BILLING_MESSAGE =
+  "Your account is managed by your company owner. Please contact your account administrator.";
+
+/** True for an employee login: it belongs to companies but owns none. */
+export function isStaffOnly(companies: { owner_id: string }[], userId: string | null): boolean {
+  return !!userId && companies.length > 0 && !companies.some((c) => c.owner_id === userId);
+}
